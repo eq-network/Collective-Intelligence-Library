@@ -18,7 +18,7 @@ from datetime import datetime
 from core.graph import GraphState
 from core.category import sequential, compose, attach_properties, jit_transform
 from core.property import ConservesSum, Property
-from domains.democracy.initialization import initialize_democratic_graph_state
+from environments.democracy.initialization import initialize_democratic_graph_state
 from execution.simulation import run_simulation
 from analysis.democracy import compute_metrics, aggregate_results
 
