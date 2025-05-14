@@ -313,3 +313,88 @@ def initialize_democratic_graph_state(
     }
     
     return GraphState(node_attrs, adj_matrices, global_attrs)
+
+# environments/democracy/initialization.py
+# Add to existing file
+
+def initialize_portfolio_data(
+    portfolio_config: PortfolioConfig, 
+    prediction_market: jnp.ndarray,
+    key: RandomKey
+) -> Dict[str, Any]:
+    """Initialize portfolio data from configuration"""
+    # Create portfolio definitions based on the scenario
+    portfolios = {
+        "Conservative": {"weights": jnp.array([0.6, 0.3, 0.1])},
+        "Balanced": {"weights": jnp.array([0.4, 0.3, 0.3])},
+        "Aggressive": {"weights": jnp.array([0.2, 0.1, 0.7])},
+        "Contrarian": {"weights": jnp.array([0.3, 0.6, 0.1])},
+        "Market-Weighted": {"weights": jnp.array([0.35, 0.15, 0.5])}
+    }
+    
+    # Calculate expected returns based on prediction market
+    for name, portfolio in portfolios.items():
+        weights = portfolio["weights"]
+        expected_return = jnp.sum(weights * prediction_market)
+        portfolios[name]["expected_return"] = float(expected_return)
+    
+    return portfolios
+
+def initialize_democratic_graph_state(
+    # Existing parameters...
+    portfolio_config: Optional[PortfolioConfig] = None
+) -> GraphState:
+    """Initialize graph state for democratic simulation"""
+    # Existing initialization code...
+    
+    # Initialize portfolio-specific state if configured
+    if portfolio_config is not None:
+        # Initialize token budgets if using tokens
+        if portfolio_config.use_tokens:
+            # Distribute agent capacities (low, medium, high)
+            capacity_types = jnp.zeros(num_agents, dtype=jnp.int32)
+            # Determine agent counts by capacity
+            low_count = portfolio_config.token_distribution.get("low_capacity_count", 3)
+            med_count = portfolio_config.token_distribution.get("medium_capacity_count", 4)
+            high_count = portfolio_config.token_distribution.get("high_capacity_count", 3)
+            
+            # Assign capacities (0=low, 1=medium, 2=high)
+            indices = jnp.arange(num_agents)
+            key, subkey = jr.split(key)
+            indices = jr.permutation(subkey, indices)
+            
+            # Assign tokens based on capacity
+            token_budgets = jnp.zeros(num_agents)
+            for i, idx in enumerate(indices):
+                if i < low_count:
+                    capacity_types = capacity_types.at[idx].set(0)
+                    token_budgets = token_budgets.at[idx].set(
+                        portfolio_config.token_distribution.get("low_capacity", 150))
+                elif i < low_count + med_count:
+                    capacity_types = capacity_types.at[idx].set(1)
+                    token_budgets = token_budgets.at[idx].set(
+                        portfolio_config.token_distribution.get("medium_capacity", 300))
+                elif i < low_count + med_count + high_count:
+                    capacity_types = capacity_types.at[idx].set(2)
+                    token_budgets = token_budgets.at[idx].set(
+                        portfolio_config.token_distribution.get("high_capacity", 500))
+            
+            node_attrs["token_budget"] = token_budgets
+            node_attrs["tokens_spent"] = jnp.zeros(num_agents)
+            node_attrs["capacity_type"] = capacity_types
+        
+        # Initialize prediction market
+        key, subkey = jr.split(key)
+        prediction_market = jnp.array([1.15, 0.6, 1.5])  # From scenario
+        
+        # Initialize portfolios
+        portfolios = initialize_portfolio_data(portfolio_config, prediction_market, subkey)
+        
+        # Add portfolio preferences to node attributes
+        node_attrs["portfolio_preferences"] = jnp.zeros((num_agents, len(portfolios)))
+        
+        # Add to global attributes
+        global_attrs["portfolios"] = portfolios
+        global_attrs["prediction_market"] = prediction_market
+    
+    return GraphState(node_attrs, adj_matrices, global_attrs)

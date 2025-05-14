@@ -64,3 +64,18 @@ class DemocraticEnvironmentConfig:
     track_delegation_metrics: bool = True
     track_resource_metrics: bool = True
     track_information_metrics: bool = True
+
+@dataclass(frozen=True)
+class PortfolioConfig:
+    """Configuration for portfolio options"""
+    portfolio_strategies: List[str] = field(
+        default_factory=lambda: ["Conservative", "Balanced", "Aggressive", "Contrarian", "Market-Weighted"]
+    )
+    use_tokens: bool = True
+    token_distribution: Dict[str, int] = field(
+        default_factory=lambda: {
+            "low_capacity": 150,
+            "medium_capacity": 300,
+            "high_capacity": 500
+        }
+    )

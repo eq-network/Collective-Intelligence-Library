@@ -1,142 +1,72 @@
 # environments/democracy/portfolio_environment.py
-from typing import Dict, List, Tuple, Any, Optional
+from typing import Dict, Any, Optional
 import jax
 import jax.numpy as jnp
-import jax.random as jr
-import pandas as pd
-import matplotlib.pyplot as plt
 
 from core.graph import GraphState
-from core.category import Transform
-from execution.call import execute, execute_with_instrumentation
-from environments.democracy.portfolio_config import PortfolioDemocracyConfig
-from environments.democracy.porfolio_initialization import initialize_portfolio_state
-from environments.democracy.portfolio_mechanisms import create_portfolio_mechanism_pipeline
+from core.category import Transform, sequential
+from transformations.bottom_up.portfolio_analysis import create_portfolio_analyzer
+from environments.democracy.portfolio_config import PortfolioSpec
+from environments.democracy.portfolio_initialization import initialize_portfolio_state
+from services.adapters import AnalysisAdapter, RuleBasedAnalysisAdapter
 
-class PortfolioDemocracyEnvironment:
-    """Environment for simulating portfolio-based democratic decisions"""
+class PortfolioEnvironment:
+    """Environment for portfolio democracy simulations."""
     
-    def __init__(self, config: PortfolioDemocracyConfig):
-        """Initialize the environment with configuration"""
-        self.config = config
-        self.key = jr.PRNGKey(config.seed)
+    def __init__(
+        self, 
+        num_agents: int,
+        portfolio_spec: PortfolioSpec,
+        initial_resources: float,
+        resource_threshold: float,
+        adversarial_proportion: float,
+        seed: int,
+        mechanism: str = "PLD",
+        analysis_adapter: Optional[AnalysisAdapter] = None
+    ):
+        """Initialize environment."""
+        self.num_agents = num_agents
+        self.portfolio_spec = portfolio_spec
+        self.initial_resources = initial_resources
+        self.resource_threshold = resource_threshold
+        self.adversarial_proportion = adversarial_proportion
+        self.seed = seed
+        self.mechanism = mechanism
+        self.analysis_adapter = analysis_adapter or RuleBasedAnalysisAdapter()
         
-        # Create mechanism pipelines
-        self.pipelines = create_portfolio_mechanism_pipeline()
-        self.active_pipeline = self.pipelines[config.mechanism]
+        # Create transformation pipeline
+        self.pipeline = self._create_pipeline()
         
-        # Initialize tracking variables
-        self.state_history = []
-        self.metrics = {}
-    
+    def _create_pipeline(self) -> Transform:
+        """Create transformation pipeline based on mechanism type."""
+        # Build pipeline without domain-specific transformation implementation
+        analysis_function = self.analysis_adapter.get_analysis_function()
+        portfolio_analyzer = create_portfolio_analyzer(analysis_function)
+        
+        # Compose with appropriate democracy mechanism
+        # ...
+        
+        return pipeline
+        
     def initialize(self) -> GraphState:
-        """Initialize the simulation state"""
-        self.key, subkey = jr.split(self.key)
-        return initialize_portfolio_state(self.config, subkey)
+        """Initialize graph state."""
+        key = jax.random.PRNGKey(self.seed)
+        return initialize_portfolio_state(
+            self.num_agents,
+            self.portfolio_spec,
+            self.initial_resources,
+            self.resource_threshold,
+            self.adversarial_proportion,
+            key
+        )
     
-    def run_simulation(self) -> Tuple[GraphState, List[GraphState]]:
-        """Run a complete simulation"""
+    def run(self, execution_system) -> Dict[str, Any]:
+        """Run simulation using provided execution system."""
         # Initialize state
-        initial_state = self.initialize()
-        current_state = initial_state
-        state_history = [initial_state]
+        state = self.initialize()
         
-        # Execute rounds
-        for round_num in range(1, self.config.num_rounds + 1):
-            # Split key for this round
-            self.key, round_key = jr.split(self.key)
-            
-            # Update round counter
-            current_state = current_state.update_global_attr("round", round_num)
-            
-            # Execute transformation with instrumentation
-            execution_spec = {
-                "strategy": "sequential",
-                "verify_properties": True,
-                "track_history": True,
-                "collect_metrics": True,
-            }
-            
-            # Apply mechanism pipeline
-            current_state, instrumentation = execute_with_instrumentation(
-                self.active_pipeline,
-                current_state,
-                execution_spec
-            )
-            
-            # Store metrics
-            round_metrics = instrumentation["metrics"]
-            self.metrics[f"round_{round_num}"] = round_metrics
-            
-            # Add to history
-            state_history.append(current_state)
-            
-            # Check termination condition
-            if current_state.global_attrs.get("total_resources", 0) < self.config.resources.threshold:
-                break
+        # Setup execution
+        result = execution_system.run_simulation(state, self.pipeline)
         
-        # Store final history
-        self.state_history = state_history
-        
-        return current_state, state_history
-    
-    def get_results_summary(self) -> Dict[str, Any]:
-        """Summarize simulation results"""
-        if not self.state_history:
-            return {"status": "No simulation has been run"}
-        
-        # Extract key metrics
-        final_state = self.state_history[-1]
-        initial_state = self.state_history[0]
-        
-        # Resource trajectory
-        resources = [state.global_attrs.get("total_resources", 0) for state in self.state_history]
-        
-        # Decisions made each round
-        decisions = []
-        for state in self.state_history[1:]:  # Skip initial state
-            decision_idx = state.global_attrs.get("current_decision", -1)
-            portfolio_names = list(state.global_attrs.get("portfolios", {}).keys())
-            if 0 <= decision_idx < len(portfolio_names):
-                decisions.append(portfolio_names[decision_idx])
-            else:
-                decisions.append("Unknown")
-        
-        # Calculate summary stats
-        summary = {
-            "mechanism": self.config.mechanism,
-            "num_rounds": len(self.state_history) - 1,
-            "initial_resources": initial_state.global_attrs.get("total_resources", 0),
-            "final_resources": final_state.global_attrs.get("total_resources", 0),
-            "resource_growth": final_state.global_attrs.get("total_resources", 0) / 
-                              initial_state.global_attrs.get("total_resources", 1),
-            "decisions": decisions,
-            "resources": resources,
-        }
-        
-        return summary
-    
-    def plot_resource_trajectory(self, figsize=(10, 6)):
-        """Plot resource trajectory over simulation rounds"""
-        if not self.state_history:
-            print("No simulation data available")
-            return None
-        
-        resources = [state.global_attrs.get("total_resources", 0) for state in self.state_history]
-        rounds = list(range(len(resources)))
-        
-        fig, ax = plt.subplots(figsize=figsize)
-        ax.plot(rounds, resources, marker='o', linestyle='-', label=self.config.mechanism)
-        
-        # Add threshold line
-        threshold = self.config.resources.threshold
-        ax.axhline(y=threshold, color='r', linestyle='--', 
-                  label=f'Survival Threshold ({threshold})')
-        
-        ax.set_title(f'Resource Trajectory: {self.config.mechanism}')
-        ax.set_xlabel('Round')
-        ax.set_ylabel('Resources')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        
-        return fig
+        # Return results
+        return result
