@@ -8,7 +8,7 @@ from transformations.top_down.democratic_transforms.delegation import create_del
 from transformations.top_down.democratic_transforms.power_flow import create_power_flow_transform
 from transformations.top_down.democratic_transforms.voting import create_voting_transform
 from transformations.top_down.resource import create_resource_transform
-from environments.democracy.configuration import DemocraticEnvironmentConfig
+from graph_transformation.environments.democracy.bloat.old.configuration import DemocraticEnvironmentConfig
 
 def create_mechanism_pipeline(
     mechanism: Literal["PDD", "PRD", "PLD"],
@@ -25,7 +25,6 @@ def create_mechanism_pipeline(
         Composite transformation representing the mechanism
     """
     # Create common components
-    message_passing = create_message_passing_transform("communication")
     prediction_market = create_prediction_market_transform(
         config={
             "accuracy": config.prediction_market.accuracy,
@@ -46,7 +45,6 @@ def create_mechanism_pipeline(
             config={"type": "direct"}
         )
         return sequential(
-            message_passing,
             prediction_market,
             voting,
             resource_transform
@@ -59,7 +57,6 @@ def create_mechanism_pipeline(
             config={"type": "representative"}
         )
         return sequential(
-            message_passing,
             prediction_market,
             voting,
             resource_transform
@@ -73,10 +70,9 @@ def create_mechanism_pipeline(
             config={"type": "weighted"}
         )
         return sequential(
-            message_passing,
+            prediction_market,
             delegation,
             power_flow,
-            prediction_market,
             voting,
             resource_transform
         )

@@ -7,7 +7,7 @@ import jax.random as jr
 from core.graph import GraphState
 from core.category import Transform, sequential
 from execution.call import execute, execute_with_instrumentation
-from environments.democracy.configuration import DemocraticEnvironmentConfig
+from graph_transformation.environments.democracy.bloat.old.configuration import DemocraticEnvironmentConfig
 from environments.democracy.initialization import initialize_democratic_graph_state
 from environments.democracy.mechanism_factory import create_mechanism_pipeline
 

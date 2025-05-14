@@ -107,75 +107,6 @@ def initialize_beliefs(
     beliefs = jnp.maximum(base_beliefs + noise, 0.01)
     return beliefs / jnp.sum(beliefs, axis=1, keepdims=True)
 
-def initialize_communication_network(
-    num_agents: int, 
-    key: RandomKey,
-    network_type: str = "small_world",
-    network_params: Dict[str, Any] = None
-) -> jnp.ndarray:
-    """
-    Initialize a communication network between agents.
-    
-    Creates an adjacency matrix representing the communication topology:
-    - "random": Random sparse connections with specified probability
-    - "small_world": Small-world network with local clustering and shortcuts
-    - "scale_free": Scale-free network with degree following power law
-    
-    Args:
-        num_agents: Number of agents in the network
-        key: JAX PRNG key for randomization
-        network_type: Type of network topology to generate
-        network_params: Parameters specific to the network type
-                       - "random": {"p_connect": 0.1}
-                       - "small_world": {"k": 4, "p_rewire": 0.1}
-                       - "scale_free": {"m": 2}
-                       
-    Returns:
-        Float array of shape [num_agents, num_agents] representing adjacency matrix
-    """
-    params = network_params or {}
-    key, subkey = jr.split(key)
-    
-    if network_type == "random":
-        # Simple random network
-        p_connect = params.get("p_connect", 0.1)
-        random_matrix = jr.uniform(subkey, (num_agents, num_agents)) < p_connect
-        # Remove self-loops (no self-communication)
-        identity = jnp.eye(num_agents, dtype=jnp.bool_)
-        # Ensure symmetry (undirected graph)
-        upper_triangular = jnp.triu(random_matrix, k=1)
-        symmetric_matrix = upper_triangular | jnp.transpose(upper_triangular)
-        # Convert to float matrix for JAX compatibility
-        return jnp.array(symmetric_matrix & ~identity, dtype=jnp.float32)
-    
-    elif network_type == "small_world":
-        # Simple approximation of small-world network
-        # For a proper implementation, consider using NetworkX and converting to JAX
-        k = params.get("k", 4)  # Average degree
-        p_rewire = params.get("p_rewire", 0.1)  # Rewiring probability
-        
-        # Start with a ring lattice
-        lattice = jnp.zeros((num_agents, num_agents), dtype=jnp.bool_)
-        for i in range(1, k // 2 + 1):
-            indices = jnp.arange(num_agents)
-            lattice = lattice.at[indices, (indices + i) % num_agents].set(True)
-            lattice = lattice.at[(indices + i) % num_agents, indices].set(True)
-        
-        # Random rewiring
-        rewire_candidates = jnp.where(lattice, 
-                                     jr.uniform(subkey, (num_agents, num_agents)) < p_rewire, 
-                                     False)
-        # This is a simplification; proper rewiring requires more complex operations
-        
-        return jnp.array(lattice, dtype=jnp.float32)
-    
-    else:
-        # Default to random network if type not recognized
-        p_connect = params.get("p_connect", 0.1)
-        random_matrix = jr.uniform(subkey, (num_agents, num_agents)) < p_connect
-        identity = jnp.eye(num_agents, dtype=jnp.bool_)
-        return jnp.array(random_matrix & ~identity, dtype=jnp.float32)
-
 def initialize_crop_distributions(
     crops: List[str],
     key: RandomKey,
@@ -248,7 +179,6 @@ def initialize_democratic_graph_state(
     yield_volatility: str,
     key: RandomKey,
     expertise_params: Dict[str, float] = None,
-    network_params: Dict[str, Any] = None,
     belief_noise: float = 0.1
 ) -> GraphState:
     """
@@ -289,16 +219,6 @@ def initialize_democratic_graph_state(
         "belief": initialize_beliefs(num_agents, len(crops), subkey3, belief_noise),
     }
     
-    # Initialize adjacency matrices
-    adj_matrices = {
-        "communication": initialize_communication_network(
-            num_agents, 
-            subkey4,
-            network_params=network_params
-        ),
-        "delegation": jnp.zeros((num_agents, num_agents)),  # Empty delegation initially
-    }
-    
     # Initialize global attributes
     global_attrs = {
         "resource_distributions": initialize_crop_distributions(
@@ -311,90 +231,5 @@ def initialize_democratic_graph_state(
         "crops": crops,
         "round": 0,
     }
-    
-    return GraphState(node_attrs, adj_matrices, global_attrs)
-
-# environments/democracy/initialization.py
-# Add to existing file
-
-def initialize_portfolio_data(
-    portfolio_config: PortfolioConfig, 
-    prediction_market: jnp.ndarray,
-    key: RandomKey
-) -> Dict[str, Any]:
-    """Initialize portfolio data from configuration"""
-    # Create portfolio definitions based on the scenario
-    portfolios = {
-        "Conservative": {"weights": jnp.array([0.6, 0.3, 0.1])},
-        "Balanced": {"weights": jnp.array([0.4, 0.3, 0.3])},
-        "Aggressive": {"weights": jnp.array([0.2, 0.1, 0.7])},
-        "Contrarian": {"weights": jnp.array([0.3, 0.6, 0.1])},
-        "Market-Weighted": {"weights": jnp.array([0.35, 0.15, 0.5])}
-    }
-    
-    # Calculate expected returns based on prediction market
-    for name, portfolio in portfolios.items():
-        weights = portfolio["weights"]
-        expected_return = jnp.sum(weights * prediction_market)
-        portfolios[name]["expected_return"] = float(expected_return)
-    
-    return portfolios
-
-def initialize_democratic_graph_state(
-    # Existing parameters...
-    portfolio_config: Optional[PortfolioConfig] = None
-) -> GraphState:
-    """Initialize graph state for democratic simulation"""
-    # Existing initialization code...
-    
-    # Initialize portfolio-specific state if configured
-    if portfolio_config is not None:
-        # Initialize token budgets if using tokens
-        if portfolio_config.use_tokens:
-            # Distribute agent capacities (low, medium, high)
-            capacity_types = jnp.zeros(num_agents, dtype=jnp.int32)
-            # Determine agent counts by capacity
-            low_count = portfolio_config.token_distribution.get("low_capacity_count", 3)
-            med_count = portfolio_config.token_distribution.get("medium_capacity_count", 4)
-            high_count = portfolio_config.token_distribution.get("high_capacity_count", 3)
-            
-            # Assign capacities (0=low, 1=medium, 2=high)
-            indices = jnp.arange(num_agents)
-            key, subkey = jr.split(key)
-            indices = jr.permutation(subkey, indices)
-            
-            # Assign tokens based on capacity
-            token_budgets = jnp.zeros(num_agents)
-            for i, idx in enumerate(indices):
-                if i < low_count:
-                    capacity_types = capacity_types.at[idx].set(0)
-                    token_budgets = token_budgets.at[idx].set(
-                        portfolio_config.token_distribution.get("low_capacity", 150))
-                elif i < low_count + med_count:
-                    capacity_types = capacity_types.at[idx].set(1)
-                    token_budgets = token_budgets.at[idx].set(
-                        portfolio_config.token_distribution.get("medium_capacity", 300))
-                elif i < low_count + med_count + high_count:
-                    capacity_types = capacity_types.at[idx].set(2)
-                    token_budgets = token_budgets.at[idx].set(
-                        portfolio_config.token_distribution.get("high_capacity", 500))
-            
-            node_attrs["token_budget"] = token_budgets
-            node_attrs["tokens_spent"] = jnp.zeros(num_agents)
-            node_attrs["capacity_type"] = capacity_types
-        
-        # Initialize prediction market
-        key, subkey = jr.split(key)
-        prediction_market = jnp.array([1.15, 0.6, 1.5])  # From scenario
-        
-        # Initialize portfolios
-        portfolios = initialize_portfolio_data(portfolio_config, prediction_market, subkey)
-        
-        # Add portfolio preferences to node attributes
-        node_attrs["portfolio_preferences"] = jnp.zeros((num_agents, len(portfolios)))
-        
-        # Add to global attributes
-        global_attrs["portfolios"] = portfolios
-        global_attrs["prediction_market"] = prediction_market
     
     return GraphState(node_attrs, adj_matrices, global_attrs)
