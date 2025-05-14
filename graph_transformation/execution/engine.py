@@ -1,85 +1,75 @@
 # execution/engine.py
 
-from typing import Dict, List, Any, Optional, Callable, Tuple, TypeVar, Protocol
+from typing import Dict, List, Any, Optional, Callable, Tuple
 import jax
 import jax.numpy as jnp
-from functools import partial
 import time
 
 from core.graph import GraphState
 from core.category import Transform
 from core.property import Property
 
-# Type for execution configurations
+# Type alias for execution configurations
 ExecutionConfig = Dict[str, Any]
 
 class ExecutionEngine:
     """
-    Central coordinator for graph transformation execution.
+    Core execution engine for graph transformations.
     
-    The ExecutionEngine separates transformation semantics from execution concerns,
-    allowing different execution strategies while preserving mathematical properties.
+    The ExecutionEngine coordinates the execution of transformations,
+    managing strategies, property verification, and instrumentation.
     """
     
     def __init__(self, config: Optional[ExecutionConfig] = None):
-        """
-        Initialize execution engine with optional configuration.
-        
-        Args:
-            config: Configuration parameters for execution strategies
-        """
+        """Initialize with execution configuration."""
         self.config = config or {}
-        self._transform_evaluator = None
-        self._property_verifier = None
-        self._parallel_strategy = None
-        self._hardware_accelerator = None
-        self._memory_manager = None
-        self._history_tracker = None
-        self._metrics_collector = None
-        
-        # Initialize components based on configuration
-        self._init_components()
+        self._initialize_components()
+        self._metrics = {}
+        self._history = []
     
-    def _init_components(self):
-        """Initialize all engine components based on configuration."""
+    def _initialize_components(self):
+        """Initialize execution components based on configuration."""
+        # Import here to avoid circular dependencies
         from execution.functional_core.evaluator import TransformEvaluator
         from execution.functional_core.property_verifier import PropertyVerifier
+        from execution.instrumentation.history import HistoryTracker
+        from execution.instrumentation.metrics import MetricsCollector
         
-        # Initialize functional core
-        self._transform_evaluator = TransformEvaluator()
-        self._property_verifier = PropertyVerifier()
+        # Core components
+        self._evaluator = TransformEvaluator()
+        self._verifier = PropertyVerifier()
         
-        # Initialize effect handlers based on configuration
-        if self.config.get("use_parallel", False):
-            from execution.effect_handlers.parallel import ParallelStrategy
-            self._parallel_strategy = ParallelStrategy(
-                num_workers=self.config.get("num_workers", 1)
-            )
-            
-        if self.config.get("use_hardware_acceleration", False):
-            from execution.effect_handlers.hardware import HardwareAccelerator
-            self._hardware_accelerator = HardwareAccelerator(
-                device=self.config.get("hardware_device", "cpu")
-            )
-            
-        if self.config.get("use_memory_management", False):
-            from execution.effect_handlers.memory import MemoryManager
-            self._memory_manager = MemoryManager(
-                max_memory=self.config.get("max_memory", None)
-            )
-        
-        # Initialize instrumentation based on configuration
+        # Optional instrumentation
         if self.config.get("track_history", False):
-            from execution.instrumentation.history import HistoryTracker
-            self._history_tracker = HistoryTracker(
-                max_history=self.config.get("max_history", 100)
-            )
+            self._history_tracker = HistoryTracker()
+        else:
+            self._history_tracker = None
             
         if self.config.get("collect_metrics", False):
-            from execution.instrumentation.metrics import MetricsCollector
-            self._metrics_collector = MetricsCollector(
-                metrics=self.config.get("metrics", ["time", "memory"])
+            self._metrics_collector = MetricsCollector()
+        else:
+            self._metrics_collector = None
+        
+        # Strategy components
+        self._initialize_strategy()
+    
+    def _initialize_strategy(self):
+        """Initialize execution strategy based on configuration."""
+        strategy = self.config.get("strategy", "sequential")
+        
+        if strategy == "parallel" and self.config.get("use_parallel", False):
+            from execution.effect_handlers.parallel import ParallelStrategy
+            self._strategy = ParallelStrategy(
+                num_workers=self.config.get("num_workers", 1)
             )
+        elif strategy == "hardware" and self.config.get("use_hardware_acceleration", False):
+            from execution.effect_handlers.hardware import HardwareAccelerator
+            self._strategy = HardwareAccelerator(
+                device=self.config.get("hardware_device", "cpu")
+            )
+        else:
+            # Default to sequential strategy
+            self._strategy = None
     
     def apply(
         self, 
@@ -88,57 +78,51 @@ class ExecutionEngine:
         verify_properties: bool = True
     ) -> GraphState:
         """
-        Apply a transformation to a graph state with instrumentation.
+        Apply a transformation to a graph state.
         
         Args:
             transform: Transformation to apply
             state: Current graph state
-            verify_properties: Whether to verify properties after transformation
+            verify_properties: Whether to verify properties
             
         Returns:
-            New graph state after transformation
+            Transformed graph state
         """
-        # Start metrics collection if enabled
+        # Start metrics collection
         if self._metrics_collector:
             self._metrics_collector.start_collection()
+            start_time = time.time()
         
-        # Apply memory management if enabled
-        if self._memory_manager:
-            self._memory_manager.prepare_for_execution(state)
-        
-        # Choose execution strategy based on configuration
-        if self._parallel_strategy and self._transform_evaluator.is_parallelizable(transform):
-            # Apply transform using parallel strategy
-            new_state = self._parallel_strategy.execute(
-                transform, state, self._transform_evaluator
-            )
-        elif self._hardware_accelerator:
-            # Apply transform with hardware acceleration
-            new_state = self._hardware_accelerator.execute(
-                transform, state, self._transform_evaluator
-            )
+        # Apply transformation using appropriate strategy
+        if self._strategy and self._evaluator.is_parallelizable(transform):
+            new_state = self._strategy.execute(transform, state, self._evaluator)
         else:
-            # Standard sequential execution
-            new_state = self._transform_evaluator.evaluate(transform, state)
+            new_state = self._evaluator.evaluate(transform, state)
         
         # Verify properties if requested
-        if verify_properties and self._property_verifier and hasattr(transform, 'preserves'):
-            self._property_verifier.verify(transform, state, new_state)
+        if verify_properties and hasattr(transform, 'preserves'):
+            verification_results = self._verifier.verify(transform, state, new_state)
+            # Store verification results in metrics
+            if self._metrics_collector:
+                self._metrics["verification"] = verification_results
         
-        # Record history if enabled
+        # Record history
         if self._history_tracker:
             self._history_tracker.record(transform, state, new_state)
+            self._history = self._history_tracker.get_history()
         
-        # Finish metrics collection if enabled
+        # Finish metrics collection
         if self._metrics_collector:
-            self._metrics_collector.finish_collection(transform, state, new_state)
+            end_time = time.time()
+            self._metrics["execution_time"] = end_time - start_time
+            self._metrics_collector.record_metrics(self._metrics)
         
         return new_state
     
-    def get_history(self) -> List[Dict[str, Any]]:
-        """Get execution history if history tracking is enabled."""
-        return self._history_tracker.get_history() if self._history_tracker else []
-    
     def get_metrics(self) -> Dict[str, Any]:
-        """Get collected metrics if metrics collection is enabled."""
-        return self._metrics_collector.get_metrics() if self._metrics_collector else {}
+        """Get collected execution metrics."""
+        return self._metrics
+    
+    def get_history(self) -> List[Dict[str, Any]]:
+        """Get execution history."""
+        return self._history

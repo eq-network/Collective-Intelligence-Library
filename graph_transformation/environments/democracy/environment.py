@@ -1,4 +1,4 @@
-# domains/democracy/environment.py
+# environments/democracy/environment.py
 from typing import Dict, List, Optional, Tuple, Any
 import jax
 import jax.numpy as jnp
@@ -6,7 +6,7 @@ import jax.random as jr
 
 from core.graph import GraphState
 from core.category import Transform, sequential
-from execution.simulation import run_simulation
+from execution.call import execute, execute_with_instrumentation
 from environments.democracy.configuration import DemocraticEnvironmentConfig
 from environments.democracy.initialization import initialize_democratic_graph_state
 from environments.democracy.mechanism_factory import create_mechanism_pipeline
@@ -59,29 +59,47 @@ class DemocraticEnvironment:
         # Split key for simulation
         self.key, subkey = jr.split(self.key)
         
+        # Create execution specification
+        execution_spec = {
+            "strategy": "sequential",
+            "verify_properties": True,
+            "track_history": True,
+            "collect_metrics": True,
+            "manage_memory": True,
+        }
+        
         # Apply JIT if configured
-        transform_pipeline = self.mechanism_pipeline
         if self.config.jit_compile:
-            transform_pipeline = jax.jit(transform_pipeline)
+            self.mechanism_pipeline = jax.jit(self.mechanism_pipeline)
         
-        # Define termination condition
-        def termination_condition(state: GraphState) -> bool:
-            return state.global_attrs.get("total_resources", float('inf')) < \
-                   state.global_attrs.get("resource_min_threshold", 0)
+        # State history for tracking
+        state_history = [initial_state]
+        current_state = initial_state
         
-        # Run simulation
-        final_state, state_history = run_simulation(
-            initial_state=initial_state,
-            transform=transform_pipeline,
-            num_rounds=self.config.num_rounds,
-            key=subkey,
-            termination_condition=termination_condition
-        )
+        # Execute simulation rounds
+        for round_num in range(1, self.config.num_rounds + 1):
+            # Update round counter
+            current_state = current_state.update_global_attr("round", round_num)
+            
+            # Execute transformation via execution call
+            current_state, instrumentation = execute_with_instrumentation(
+                self.mechanism_pipeline,
+                current_state,
+                execution_spec
+            )
+            
+            # Record state
+            state_history.append(current_state)
+            
+            # Check termination condition
+            if current_state.global_attrs.get("total_resources", float('inf')) < \
+               current_state.global_attrs.get("resource_min_threshold", 0):
+                break
         
-        # Store state history
+        # Store history
         self.state_history = state_history
         
-        return final_state, state_history
+        return current_state, state_history
     
     def run_multiple_trials(self, num_trials: Optional[int] = None) -> Dict[str, Any]:
         """Run multiple simulation trials and aggregate results."""
@@ -102,7 +120,7 @@ class DemocraticEnvironment:
     def calculate_metrics(self, final_state: GraphState, 
                           state_history: List[GraphState]) -> Dict[str, Any]:
         """Calculate metrics for a single simulation trial."""
-        from domains.democracy.simulation_metrics import calculate_simulation_metrics
+        from environments.democracy.simulation_metrics import calculate_simulation_metrics
         return calculate_simulation_metrics(
             final_state=final_state,
             state_history=state_history,
@@ -111,5 +129,5 @@ class DemocraticEnvironment:
     
     def aggregate_metrics(self, metrics_list: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Aggregate metrics across multiple trials."""
-        from domains.democracy.simulation_metrics import aggregate_simulation_metrics
+        from environments.democracy.simulation_metrics import aggregate_simulation_metrics
         return aggregate_simulation_metrics(metrics_list)
