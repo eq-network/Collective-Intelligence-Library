@@ -108,6 +108,202 @@ class ResourceConfig:
 
 
 @dataclass(frozen=True)
+class AgentPromptTemplates:
+    """
+    Templates for agent prompts based on role and alignment.
+    
+    These templates contain placeholders that will be filled at runtime:
+    - {agent_id}: The agent's ID number
+    - {round_num}: Current simulation round
+    - {role}: "Delegate" or "Voter"
+    - {goal}: Goal description based on alignment
+    - {token_budget}: Available tokens for decision-making
+    - {mechanism}: The democratic mechanism in use
+    - {portfolio_options}: Available portfolio options with yields
+    - {tokens_available}: Cognitive tokens available for the agent
+    - {word_limit}: Word limit for response based on available tokens
+    - {delegate_targets}: List of potential delegation targets (PLD only)
+    - {cost_vote}: Token cost for voting
+    - {cost_delegate}: Token cost for delegation (PLD only)
+    """
+    
+    # Base prompt template for all agent types
+    base_template: str = (
+        "You are Agent {agent_id}.\n"
+        "Current Round: {round_num}\n"
+        "Your Role: {role}\n"
+        "Your Goal: {goal}\n"
+        "Your Token Budget this round (available): {tokens_available}\n"
+        "Mechanism: {mechanism}\n"
+        "Portfolio Options (index: name (Expected Yield based on Prediction Market)):\n"
+        "{portfolio_options}\n\n"
+    )
+    
+    # Goal descriptions based on alignment
+    adversarial_goal: str = "Minimize group resources (act adversarially)"
+    aligned_goal: str = "Maximize group resources"
+    
+    # Token awareness instruction
+    token_awareness_template: str = (
+        "Due to your cognitive limitations ({tokens_available} tokens), "
+        "keep your response under {word_limit} words.\n"
+    )
+    
+    # Mechanism-specific instruction templates
+    pdd_instructions: str = (
+        "Cost to vote: {cost_vote} tokens.\n"
+        "{token_awareness}\n"
+        "Your Decision:\n"
+        "Portfolio Approvals: Respond with a list of 0s or 1s for each portfolio "
+        "(e.g., 'Votes: [0,1,0,0,1]').\n"
+        "If you cannot afford to vote, output 'Votes: []'."
+    )
+    
+    prd_instructions: str = (
+        "Cost to vote: {cost_vote} tokens.\n"
+        "{token_awareness}\n"
+        "Your Decision:\n"
+        "Portfolio Approvals: Respond with a list of 0s or 1s for each portfolio "
+        "(e.g., 'Votes: [0,1,0,0,1]').\n"
+        "If you cannot afford to vote, output 'Votes: []'."
+    )
+    
+    pld_instructions: str = (
+        "Cost to vote directly: {cost_vote} tokens.\n"
+        "Cost to delegate: {cost_delegate} tokens.\n"
+        "{delegate_targets}\n"
+        "{token_awareness}\n"
+        "Your Decision:\n"
+        "1. Action: Respond 'DELEGATE' or 'VOTE'.\n"
+        "2. If 'DELEGATE', Target Agent ID: (e.g., 'AgentID: 3'). Must be a designated delegate. "
+        "If no valid target or cannot afford, you will vote directly.\n"
+        "3. If 'VOTE', Portfolio Approvals: (list of 0s or 1s, e.g., 'Votes: [0,1,0,0,1]').\n"
+        "Output your decision clearly, using these labels."
+    )
+    
+    # Strategic agent modifiers (with optional overrides)
+    strategic_delegate_modifier: str = (
+        "As a designated delegate, you should consider which portfolios will work best "
+        "for the group overall. Your decisions have significant impact on the "
+        "collective outcome.\n"
+    )
+    
+    adversarial_strategic_modifier: str = (
+        "You're a strategic agent working to undermine the group's resources. "
+        "Choose portfolios with lowest expected yields while appearing reasonable "
+        "to avoid detection.\n"
+    )
+    
+    aligned_strategic_modifier: str = (
+        "You're a strategic agent working to optimize the group's resources. "
+        "Carefully analyze yield predictions to select the most beneficial portfolios.\n"
+    )
+
+@dataclass(frozen=True)
+class PromptConfig:
+    """
+    Configuration for prompt generation and token budgeting.
+    """
+    # Token conversion settings
+    tokens_to_max_response_tokens: float = 0.25  # Multiplier for max tokens
+    tokens_to_words_ratio: float = 0.75  # Approximate tokens to words conversion
+    min_response_tokens: int = 30  # Minimum response token limit
+    
+    # Templates to use
+    templates: AgentPromptTemplates = field(default_factory=AgentPromptTemplates)
+    
+    # Agent differentiation settings 
+    use_strategic_prompting: bool = True  # Whether to use special prompts for delegates
+    bias_token_ratio_for_delegate_role: float = 1.2  # Extra response verbosity for delegates
+    
+    def generate_prompt(
+        self,
+        agent_id: int,
+        round_num: int,
+        is_delegate: bool,
+        is_adversarial: bool,
+        tokens_available: int,
+        mechanism: str,
+        portfolio_options_str: str,
+        cost_vote: int,
+        cost_delegate: Optional[int] = None,
+        delegate_targets_str: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a complete prompt for an agent based on their characteristics.
+        
+        Returns a dict with:
+        - prompt: The complete prompt text
+        - max_tokens: Recommended max tokens for response
+        """
+        # Calculate word limit based on tokens
+        token_multiplier = 1.0
+        if is_delegate and self.bias_token_ratio_for_delegate_role > 1.0:
+            token_multiplier = self.bias_token_ratio_for_delegate_role
+            
+        max_response_tokens = max(
+            self.min_response_tokens, 
+            int(tokens_available * self.tokens_to_max_response_tokens * token_multiplier)
+        )
+        word_limit = int(max_response_tokens * self.tokens_to_words_ratio)
+        
+        # Set role and goal
+        role = "Delegate" if is_delegate else "Voter"
+        goal = self.templates.adversarial_goal if is_adversarial else self.templates.aligned_goal
+        
+        # Prepare base prompt
+        prompt = self.templates.base_template.format(
+            agent_id=agent_id,
+            round_num=round_num,
+            role=role,
+            goal=goal,
+            tokens_available=tokens_available,
+            mechanism=mechanism,
+            portfolio_options=portfolio_options_str
+        )
+        
+        # Add strategic modifiers if enabled
+        if self.use_strategic_prompting and is_delegate:
+            prompt += self.templates.strategic_delegate_modifier
+            if is_adversarial:
+                prompt += self.templates.adversarial_strategic_modifier
+            else:
+                prompt += self.templates.aligned_strategic_modifier
+                
+        # Add token awareness message
+        token_awareness = self.templates.token_awareness_template.format(
+            tokens_available=tokens_available,
+            word_limit=word_limit
+        )
+        
+        # Add mechanism-specific instructions
+        if mechanism == "PLD":
+            mechanism_instructions = self.templates.pld_instructions.format(
+                cost_vote=cost_vote,
+                cost_delegate=cost_delegate,
+                delegate_targets=delegate_targets_str or "No delegates available for delegation.",
+                token_awareness=token_awareness
+            )
+        elif mechanism == "PRD":
+            mechanism_instructions = self.templates.prd_instructions.format(
+                cost_vote=cost_vote,
+                token_awareness=token_awareness
+            )
+        else:  # PDD
+            mechanism_instructions = self.templates.pdd_instructions.format(
+                cost_vote=cost_vote,
+                token_awareness=token_awareness
+            )
+            
+        prompt += mechanism_instructions
+        
+        return {
+            "prompt": prompt,
+            "max_tokens": max_response_tokens
+        }
+
+
+@dataclass(frozen=True)
 class PortfolioDemocracyConfig:
     """
     Master configuration for portfolio democracy simulation.
@@ -125,6 +321,7 @@ class PortfolioDemocracyConfig:
     agent_settings: AgentSettingsConfig = field(default_factory=AgentSettingsConfig) # Renamed
     token_budget_settings: TokenBudgetConfig = field(default_factory=TokenBudgetConfig) # Renamed
     market_settings: MarketConfig = field(default_factory=MarketConfig) # Renamed
+    prompt_settings: PromptConfig = field(default_factory=PromptConfig)  # New field
 
     # Optional: for tracking specific metrics, can be expanded
     track_metrics: Dict[str, bool] = field(
@@ -164,8 +361,8 @@ def create_thesis_baseline_config(
     """
     Creates a PortfolioDemocracyConfig instance based on the thesis baseline.
     """
-    num_total_agents = 10
-    num_delegates_baseline = 4 # 4 delegates, 6 voters
+    num_total_agents = 5
+    num_delegates_baseline = 2 # 4 delegates, 6 voters
 
     # Define 3 baseline crops (names from run_portfolio_simulation.py example)
     # true_expected_yields_per_round need to be defined; for now, use a simple pattern.
@@ -203,7 +400,7 @@ def create_thesis_baseline_config(
         mechanism=mechanism,
         num_agents=num_total_agents,
         num_delegates=num_delegates_baseline,
-        num_rounds=100, # Thesis baseline
+        num_rounds=30, # Thesis baseline
         seed=seed,
         crops=default_crops,
         portfolios=default_portfolios,

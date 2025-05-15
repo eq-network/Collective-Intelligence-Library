@@ -1,5 +1,7 @@
 # execution/effect_handlers/parallel.py
 
+# This should generally use MPI or Pthreads in the future as to have a more well-defined framework. 
+
 from typing import Dict, Any, Optional, Callable
 import jax
 import jax.numpy as jnp
