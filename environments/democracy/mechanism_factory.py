@@ -267,7 +267,6 @@ def create_portfolio_mechanism_pipeline(
         return sequential(
             prediction_market,  # Always first
             token_refresh,
-            analyze_portfolios,
             voting,
             resource_transform
         )
@@ -282,7 +281,6 @@ def create_portfolio_mechanism_pipeline(
         return sequential(
             prediction_market,  # Always first
             token_refresh,
-            analyze_portfolios,
             voting,
             resource_transform
         )
@@ -300,7 +298,6 @@ def create_portfolio_mechanism_pipeline(
         return sequential(
             prediction_market,  # Always first
             token_refresh,
-            analyze_portfolios,
             delegation,
             power_flow,
             voting,

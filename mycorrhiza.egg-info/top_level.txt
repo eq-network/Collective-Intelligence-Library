@@ -1,6 +1,0 @@
-core
-environments
-execution
-main files
-services
-transformations

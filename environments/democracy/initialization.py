@@ -9,32 +9,6 @@ from core.property import Property
 # Type alias for PRNG keys
 RandomKey = jnp.ndarray
 
-def initialize_expertise(
-    num_agents: int, 
-    key: RandomKey,
-    distribution_params: Dict[str, float] = None
-) -> jnp.ndarray:
-    """
-    Initialize agent expertise values following a beta distribution.
-    
-    Beta distribution provides a realistic model for expertise:
-    - Some agents have high expertise (subject matter experts)
-    - Most agents have moderate expertise (general knowledge)
-    - Some agents have low expertise (limited domain knowledge)
-    
-    Args:
-        num_agents: Number of agents to generate expertise for
-        key: JAX PRNG key for randomization
-        distribution_params: Optional parameters for expertise beta distribution,
-                             defaults to {"alpha": 2.0, "beta": 3.0} if None
-                             
-    Returns:
-        Array of shape [num_agents] containing expertise values in [0,1]
-    """
-    params = distribution_params or {"alpha": 2.0, "beta": 3.0}
-    key, subkey = jr.split(key)
-    return jr.beta(subkey, params["alpha"], params["beta"], (num_agents,))
-
 def initialize_adversarial_flags(
     num_agents: int, 
     adversarial_proportion: float,
@@ -74,38 +48,6 @@ def initialize_adversarial_flags(
         # In gradual mode, we start with no adversaries
         # They'll be introduced during simulation
         return jnp.zeros(num_agents, dtype=jnp.bool_)
-
-def initialize_beliefs(
-    num_agents: int, 
-    num_options: int,
-    key: RandomKey,
-    noise_scale: float = 0.1
-) -> jnp.ndarray:
-    """
-    Initialize agent beliefs about decision options.
-    
-    Initial beliefs are modeled as probability distributions over options:
-    - Each agent has a belief distribution over all available options
-    - Beliefs start relatively uniform with some random variation
-    - Sum of beliefs for each agent equals 1.0 (proper probability distribution)
-    
-    Args:
-        num_agents: Number of agents to initialize beliefs for
-        num_options: Number of decision options to have beliefs about
-        key: JAX PRNG key for randomization
-        noise_scale: Scale of random noise to add to initial beliefs (0-1)
-        
-    Returns:
-        Array of shape [num_agents, num_options] containing belief probabilities
-    """
-    key, subkey = jr.split(key)
-    # Initial beliefs are noisy and uniform across options
-    base_beliefs = jnp.ones((num_agents, num_options)) / num_options
-    # Add noise to create diversity in initial beliefs
-    noise = jr.normal(subkey, shape=(num_agents, num_options)) * noise_scale
-    # Ensure beliefs remain positive and normalized
-    beliefs = jnp.maximum(base_beliefs + noise, 0.01)
-    return beliefs / jnp.sum(beliefs, axis=1, keepdims=True)
 
 def initialize_crop_distributions(
     crops: List[str],
