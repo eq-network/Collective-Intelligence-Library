@@ -14,6 +14,7 @@ if str(root_dir) not in sys.path:
 
 from core.graph import GraphState
 
+# In transformations/top_down/resource.py
 def create_resource_transform(
     resource_calculator: Callable[[GraphState, Dict[str, Any]], float] = None,
     config: Dict[str, Any] = None
@@ -23,7 +24,7 @@ def create_resource_transform(
     # Use provided calculator or default
     calculator = resource_calculator or default_calculator
     
-    # Get resource attribute name from config with fallback
+    # Extract configuration parameter with sensible default - critical fix!
     resource_attr_name = config.get("resource_attr_name", "total_resources")
     history_attr_name = config.get("history_attr_name", "resource_history")
     
@@ -32,7 +33,7 @@ def create_resource_transform(
         if "current_decision" not in state.global_attrs:
             return state
             
-        # Get current resources using configurable attribute name
+        # Use configurable attribute name
         current_resources = state.global_attrs.get(resource_attr_name, 100.0)
         
         # Calculate resource change factor
@@ -41,9 +42,16 @@ def create_resource_transform(
         # Update resources
         new_resources = current_resources * change_factor
         
-        # Update global attributes
+        # Add debug output to track resource updates
+        print(f"DEBUG: Resource update [{resource_attr_name}]: {current_resources} * {change_factor} = {new_resources}")
+        
+        # Update global attributes with configurable name
         new_globals = dict(state.global_attrs)
         new_globals[resource_attr_name] = float(new_resources)
+        
+        # CRITICAL: Also update "total_resources" attribute for metric collectors
+        new_globals["total_resources"] = float(new_resources)
+        
         new_globals["last_resource_change"] = float(change_factor)
         
         # Track history if configured

@@ -5,3 +5,4 @@ config.json
 text
 .json
 __pycache__
+results/
