@@ -2,6 +2,9 @@
 from dataclasses import dataclass, field
 from typing import Dict, List, Literal, Any, Optional
 
+import jax.random as jr # Add this import if not already there
+import jax.numpy as jnp # Add this import if not already there
+
 @dataclass(frozen=True)
 class CropConfig:
     """
@@ -67,10 +70,10 @@ class TokenBudgetConfig:
         cost_delegate_action: Token cost for a delegation action in PLD. (Thesis: 20)
         # refresh_period is implicitly 1 as tokens are per round.
     """
-    tokens_delegate_per_round: int = 400
-    tokens_voter_per_round: int = 200
-    cost_vote: int = 10
-    cost_delegate_action: int = 20
+    tokens_delegate_per_round: int = 400 
+    tokens_voter_per_round: int = 200 
+    cost_vote: int = 0
+    cost_delegate_action: int = 0
 
 @dataclass(frozen=True)
 class AgentSettingsConfig: # Renamed from AgentConfig to avoid conflict if an Agent class exists
@@ -151,7 +154,6 @@ class AgentPromptTemplates:
     
     # Mechanism-specific instruction templates
     pdd_instructions: str = (
-        "Cost to vote: {cost_vote} tokens.\n"
         "{token_awareness}\n"
         "Your Decision:\n"
         "Portfolio Approvals: Respond with a list of 0s or 1s for each portfolio "
@@ -160,7 +162,6 @@ class AgentPromptTemplates:
     )
     
     prd_instructions: str = (
-        "Cost to vote: {cost_vote} tokens.\n"
         "{token_awareness}\n"
         "Your Decision:\n"
         "Portfolio Approvals: Respond with a list of 0s or 1s for each portfolio "
@@ -169,8 +170,6 @@ class AgentPromptTemplates:
     )
     
     pld_instructions: str = (
-        "Cost to vote directly: {cost_vote} tokens.\n"
-        "Cost to delegate: {cost_delegate} tokens.\n"
         "{delegate_targets}\n"
         "{token_awareness}\n"
         "Your Decision:\n"
@@ -356,36 +355,34 @@ def create_thesis_baseline_config(
     adversarial_proportion_total: float = 0.2, # Baseline 20%
     adversarial_proportion_delegates: float = 0.25, # Baseline 1 out of 4 delegates
     prediction_market_sigma: float = 0.25, # Baseline Medium variance
-    seed: int = 42
+    seed: int = 42,
+    num_simulation_rounds_for_yield_generation: int = 100, # How many rounds of yields to pre-generate
+    num_crops_config: int = 3 # How many crops
 ) -> PortfolioDemocracyConfig:
     """
     Creates a PortfolioDemocracyConfig instance based on the thesis baseline.
     """
-    num_total_agents = 5
-    num_delegates_baseline = 2 # 4 delegates, 6 voters
+    num_total_agents = 10
+    num_delegates_baseline = 4 # 4 delegates, 6 voters
 
-    # Define 3 baseline crops (names from run_portfolio_simulation.py example)
-    # true_expected_yields_per_round need to be defined; for now, use a simple pattern.
-    # Assume 100 rounds, cycle through a pattern of yields.
-    crop_yield_pattern = [1.1, 1.0, 0.9, 1.2, 0.8] # Example pattern
-    
-    default_crops = [
-        CropConfig(
-            name="CropA", # Example: Wheat
-            true_expected_yields_per_round=[crop_yield_pattern[i % len(crop_yield_pattern)] for i in range(100)],
-            yield_beta_dist_alpha=5.0, yield_beta_dist_beta=5.0 # Medium risk
-        ),
-        CropConfig(
-            name="CropB", # Example: Corn
-            true_expected_yields_per_round=[crop_yield_pattern[(i+1) % len(crop_yield_pattern)] for i in range(100)],
-            yield_beta_dist_alpha=5.0, yield_beta_dist_beta=5.0 # Medium risk
-        ),
-        CropConfig(
-            name="CropC", # Example: Fungus
-            true_expected_yields_per_round=[crop_yield_pattern[(i+2) % len(crop_yield_pattern)] for i in range(100)],
-            yield_beta_dist_alpha=5.0, yield_beta_dist_beta=5.0 # Medium risk
-        ),
-    ]
+    yield_key = jr.PRNGKey(seed + 1000) # Use a different seed base for yields
+
+    default_crops = []
+    crop_names = ["CropA", "CropB", "CropC", "CropD", "CropE"][:num_crops_config]
+
+    for i in range(num_crops_config):
+        crop_key, yield_key = jr.split(yield_key)
+        # Generate random yields around a mean of 1.0
+        # Example: Normal distribution, clipped at 0.5 and 1.5 to keep it reasonable
+        # Adjust spread (scale) as needed. A scale of 0.2 means most values are 1.0 +/- 0.4 (2 sigma)
+        random_yields = jr.normal(crop_key, shape=(num_simulation_rounds_for_yield_generation,)) * 0.2 + 1.0
+        random_yields = jnp.clip(random_yields, 0.6, 1.4) # Ensure yields are not too extreme
+
+        default_crops.append(CropConfig(
+            name=crop_names[i],
+            true_expected_yields_per_round=list(random_yields), # Convert JAX array to list of floats
+            yield_beta_dist_alpha=5.0, yield_beta_dist_beta=5.0
+        ))
 
     # Define 5 baseline portfolios (allocations from thesis example p.7, adapting tactical)
     default_portfolios = [
@@ -400,7 +397,7 @@ def create_thesis_baseline_config(
         mechanism=mechanism,
         num_agents=num_total_agents,
         num_delegates=num_delegates_baseline,
-        num_rounds=30, # Thesis baseline
+        num_rounds=50, # Thesis baseline
         seed=seed,
         crops=default_crops,
         portfolios=default_portfolios,
@@ -413,8 +410,8 @@ def create_thesis_baseline_config(
         token_budget_settings=TokenBudgetConfig( # Thesis baseline values
             tokens_delegate_per_round=400,
             tokens_voter_per_round=200,
-            cost_vote=10,
-            cost_delegate_action=20
+            cost_vote=0,
+            cost_delegate_action=0
         ),
         market_settings=MarketConfig(prediction_noise_sigma=prediction_market_sigma) # Thesis baseline
     )

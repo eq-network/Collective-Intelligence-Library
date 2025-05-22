@@ -223,77 +223,94 @@ def create_llm_agent_decision_transform(
             # Set up LLM response variables
             llm_response_text = ""
             chosen_portfolio_indices_to_approve = []
-            delegation_choice = -1  # Default to vote directly
-            action_cost = 0
+            delegation_choice = -1
+            action_cost = 0 # Will remain 0 for vote/delegate actions
+            agent_action_this_round = False 
 
-            # LLM Call and Parsing
-            if llm_service and tokens_available > 0:
+            # No need to check tokens_available > 0 for taking vote/delegate actions
+            # (unless tokens_available is used for other LLM constraints like response length)
+            if llm_service: # Still check if LLM service exists
                 try:
                     llm_response_text = llm_service.generate(prompt, max_tokens=max_tokens)
                     
-                    # Parse the response (using your existing parsing code)
                     if mechanism == "PLD":
                         action_match = re.search(r"Action:\s*(\w+)", llm_response_text, re.IGNORECASE)
                         if action_match and action_match.group(1).upper() == "DELEGATE":
                             target_match = re.search(r"AgentID:\s*(\d+)", llm_response_text, re.IGNORECASE)
                             if target_match:
                                 potential_target_id = int(target_match.group(1))
-                                # Validate target
-                                if 0 <= potential_target_id < num_agents and potential_target_id != i and \
-                                   state.node_attrs["is_delegate"][potential_target_id] and \
-                                   tokens_available >= cost_delegate_action:
+                                # Simplified validation: target exists, is a delegate, and not self
+                                if 0 <= potential_target_id < num_agents and \
+                                   potential_target_id != i and \
+                                   state.node_attrs["is_delegate"][potential_target_id]:
                                     delegation_choice = potential_target_id
-                                    action_cost = cost_delegate_action
-                                    agent_action_this_round = True
-                        
-                        if not agent_action_this_round:  # Default to VOTE if DELEGATE failed
-                            if tokens_available >= cost_vote:
-                                action_cost = cost_vote  # Will try to parse votes next
-                            else:  # Cannot afford to vote
-                                action_cost = 0
+                                    agent_action_this_round = True # Delegation action taken
+                                # else: Invalid delegate target, fallback to VOTE (handled below)
+                            # else: No AgentID provided for DELEGATE action, fallback to VOTE
 
-                    # Try to parse votes if not delegating
-                    if not (mechanism == "PLD" and agent_action_this_round and delegation_choice != -1):
-                        if tokens_available >= cost_vote:  # Check affordability
-                            votes_match = re.search(r"Votes:\s*\[([^\]]*)\]", llm_response_text, re.IGNORECASE)
-                            if votes_match:
-                                try:
-                                    vote_str_list = votes_match.group(1).split(',')
-                                    parsed_votes = [int(v.strip()) for v in vote_str_list if v.strip() in ('0','1')]
-                                    if len(parsed_votes) == num_portfolios:
-                                        chosen_portfolio_indices_to_approve = [idx for idx, val in enumerate(parsed_votes) if val == 1]
-                                        action_cost = cost_vote  # Confirm cost if votes parsed
-                                        agent_action_this_round = True
-                                except ValueError:
-                                    pass  # Fallback to random if parsing fails
+                    # VOTE Action (primary choice or fallback for PLD)
+                    # If PLD, this block is reached if:
+                    #   - "Action: VOTE" was specified
+                    #   - "Action: DELEGATE" was specified but target was invalid/missing
+                    #   - No clear "Action:" was specified, defaulting to attempt vote parse
+                    if not (mechanism == "PLD" and agent_action_this_round): # if not already a successful PLD delegation
+                        # Attempt to parse votes regardless of "Action: VOTE" if no successful delegation
+                        votes_match = re.search(r"Votes:\s*\[([^\]]*)\]", llm_response_text, re.IGNORECASE)
+                        if votes_match:
+                            try:
+                                vote_str_list = votes_match.group(1).split(',')
+                                # Ensure parsing handles empty strings or non-digits robustly
+                                parsed_votes = [int(v.strip()) for v in vote_str_list if v.strip().isdigit()]
+                                if len(parsed_votes) == num_portfolios:
+                                    chosen_portfolio_indices_to_approve = [idx for idx, val in enumerate(parsed_votes) if val == 1]
+                                # else: Malformed vote list, counts as empty vote
+                            except ValueError:
+                                pass # Non-integer in vote list, counts as empty vote
+                        # else: No "Votes:" pattern found, counts as empty vote
+                        
+                        agent_action_this_round = True # Voting action (even if empty) is considered taken
 
                 except Exception as e:
-                    print(f"LLM call or parsing error for Agent {i}: {e}. LLM Response: '{llm_response_text}'")
-                    agent_action_this_round = False  # Reset flag as LLM failed
+                    print(f"LLM call or parsing error for Agent {i} (Round {state.global_attrs.get('round_num',0)}): {e}. LLM Response: '{llm_response_text}'")
+                    # If LLM errors, agent_action_this_round remains False. What should happen?
+                    # Decide on a default action if LLM fails (e.g., abstain = do nothing, or random vote)
+                    # For now, it means no action.
+                    agent_action_this_round = False 
+            
+            print(f"DEBUG_LLM_RESPONSE: Agent {i} (Round {state.global_attrs.get('round_num',0)}) "
+                f"Mechanism {mechanism} | Raw Response:\n'''{llm_response_text}'''\n--------------------")
+            # Fallback if no LLM service or LLM error and agent_action_this_round is still False
+            if not llm_service and not agent_action_this_round:
+                # Define a default deterministic action if no LLM
+                # e.g., always vote for portfolio 0, or always abstain
+                # For PLD, this default would be to vote directly (delegation_choice = -1)
+                agent_action_this_round = True # e.g. default action is to 'vote' (abstain)
+                if mechanism == "PLD":
+                    delegation_choice = -1
 
-            # Fallback logic if needed - your existing code
-            if not agent_action_this_round and tokens_available > 0:
-                # Your existing fallback logic goes here...
-                pass
 
             # Apply decisions
-            if agent_action_this_round:
-                new_tokens_spent = new_tokens_spent.at[i].add(action_cost)
-                if delegation_choice != -1:  # PLD delegation
+            if agent_action_this_round: # If ANY action (delegate or vote) was decided
+                new_tokens_spent = new_tokens_spent.at[i].add(action_cost) # action_cost is 0
+
+                if delegation_choice != -1 and mechanism == "PLD":
                     new_delegation_target = new_delegation_target.at[i].set(delegation_choice)
-                else:  # Voting action
+                    new_agent_portfolio_votes = new_agent_portfolio_votes.at[i].set(jnp.zeros(num_portfolios, dtype=jnp.int32))
+                else: # Voting action
                     current_agent_votes = jnp.zeros(num_portfolios, dtype=jnp.int32)
                     if chosen_portfolio_indices_to_approve:
                         current_agent_votes = current_agent_votes.at[jnp.array(chosen_portfolio_indices_to_approve)].set(1)
                     new_agent_portfolio_votes = new_agent_portfolio_votes.at[i].set(current_agent_votes)
-                    if mechanism == "PLD":  # Ensure voting directly sets delegation_target to -1
-                        new_delegation_target = new_delegation_target.at[i].set(-1)
+                    if mechanism == "PLD":
+                        new_delegation_target = new_delegation_target.at[i].set(-1) 
+            # else: No action decided (e.g. LLM error and no fallback action defined)
 
-        # Update node attributes
+        # Update node attributes (outside the agent loop)
         new_node_attrs = dict(state.node_attrs)
         new_node_attrs["agent_portfolio_votes"] = new_agent_portfolio_votes
-        new_node_attrs["delegation_target"] = new_delegation_target
-        new_node_attrs["tokens_spent_current_round"] = new_tokens_spent
+        if mechanism == "PLD": # Only update delegation_target if it's PLD
+            new_node_attrs["delegation_target"] = new_delegation_target
+        # new_node_attrs["tokens_spent_current_round"] = new_tokens_spent # This will effectively not change if costs are 0
         
         return state.replace(node_attrs=new_node_attrs)
     return transform

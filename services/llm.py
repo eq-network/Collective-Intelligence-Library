@@ -59,7 +59,7 @@ class OpenRouterService(LLMService):
             raise
 
 # Factory function for consistent service creation
-def create_llm_service(model: str = "deepseek/deepseek-coder", api_key: Optional[str] = None) -> LLMService:
+def create_llm_service(model: str = "google/gemini-2.5-flash-preview-05-20", api_key: Optional[str] = None) -> LLMService:
     """Create appropriate LLM service instance."""
     return OpenRouterService(api_key=api_key, model=model)
 
@@ -67,7 +67,7 @@ if __name__ == '__main__':
     # Example usage
     try:
         # Create service with model specification
-        service = create_llm_service(model="deepseek/deepseek-coder")
+        service = create_llm_service(model="google/gemini-2.5-flash-preview-05-20")
         
         # Test the service (uncomment to actually make API call)
         # response = service.generate("Write a function to calculate factorial")
