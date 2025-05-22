@@ -164,9 +164,10 @@ def create_llm_agent_decision_transform(
         
         # Get agent-specific prediction signals (if available)
         agent_specific_signals = state.global_attrs.get("agent_specific_prediction_signals", {})
-        
+
         # Fallback to uniform signals for backward compatibility
         uniform_signals = state.global_attrs.get("prediction_market_crop_signals", jnp.ones(len(sim_config.crops)))
+
         
         # Initialize outputs (unchanged)
         new_agent_portfolio_votes = state.node_attrs.get("agent_portfolio_votes", 
@@ -176,10 +177,6 @@ def create_llm_agent_decision_transform(
         new_tokens_spent = state.node_attrs.get("tokens_spent_current_round", 
             jnp.zeros(num_agents, dtype=jnp.int32)).copy()
 
-        # Get cost parameters (unchanged)
-        cost_vote = sim_config.cognitive_resource_settings.cost_vote  # Updated attribute name
-        cost_delegate_action = sim_config.cognitive_resource_settings.cost_delegate_action
-        
         # Per-agent loop
         for i in range(num_agents):
             agent_key_val = state.global_attrs.get("round_num", 0) + state.global_attrs.get("simulation_seed", 0) + i + 1000
@@ -253,6 +250,10 @@ def create_llm_agent_decision_transform(
             if llm_service:
                 try:
                     llm_response_text = llm_service.generate(prompt, max_tokens=max_tokens)
+
+                    # DEBUG: Simple LLM response logging
+                    print(f"[LLM_RESPONSE] Agent {i}: {llm_response_text}")
+
                     
                     if mechanism == "PLD":
                         action_match = re.search(r"Action:\s*(\w+)", llm_response_text, re.IGNORECASE)

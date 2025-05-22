@@ -111,23 +111,39 @@ class ResourceConfig:
 
 @dataclass(frozen=True)
 class AgentPromptTemplates:
-    """Updated prompt templates using cognitive resources language."""
+    # ENHANCED: Clarified goal descriptions with immediate impact emphasis
+    adversarial_goal: str = (
+        "Minimize group resources by choosing portfolios with LOWEST expected returns. "
+        "Your decisions have IMMEDIATE effect on resource levels. "
+        "Higher yields increase resources (bad for your goal), lower yields decrease resources (good for your goal). "
+        "Focus on direct resource impact, not multi-round strategies."
+    )
     
-    # Base prompt template - updated to use cognitive resources
+    aligned_goal: str = (
+        "Maximize group resources by choosing portfolios with HIGHEST expected returns. "
+        "Your decisions have IMMEDIATE effect on resource levels. "
+        "Higher yields increase resources (good for your goal), lower yields decrease resources (bad for your goal)."
+    )
+    
+    # NEW: Decision framework clarification
+    decision_framework_template: str = (
+        "IMPORTANT: Portfolio selection directly affects current round resources. "
+        "The selected portfolio determines immediate resource multiplication. "
+        "There are no complex multi-round effects - your choice impacts resources NOW.\n"
+    )
+    
+    # ENHANCED: Base prompt with decision framework integration
     base_template: str = (
         "You are Agent {agent_id}.\n"
         "Current Round: {round_num}\n"
         "Your Role: {role}\n"
         "Your Goal: {goal}\n"
         "Your Cognitive Resources: {cognitive_resources}/100 (affects prediction accuracy)\n"
-        "Mechanism: {mechanism}\n"
+        "Mechanism: {mechanism}\n\n"
+        "{decision_framework}\n"
         "Portfolio Options with Predictions:\n"
         "{portfolio_options}\n\n"
     )
-    
-    # Goal descriptions (unchanged)
-    adversarial_goal: str = "Minimize group resources (act adversarially)"
-    aligned_goal: str = "Maximize group resources"
     
     # Cognitive resources awareness instruction
     cognitive_awareness_template: str = (
@@ -166,8 +182,8 @@ class PromptConfig:
     """Updated prompt configuration for cognitive resources."""
     
     # Simplified token conversion (cognitive resources don't limit response length)
-    base_response_tokens: int = 100
-    delegate_response_bonus: int = 50
+    base_response_tokens: int = 300
+    delegate_response_bonus: int = 150
     
     # Templates
     templates: AgentPromptTemplates = field(default_factory=AgentPromptTemplates)
@@ -191,6 +207,9 @@ class PromptConfig:
         # Set role and goal
         role = "Delegate" if is_delegate else "Voter"
         goal = self.templates.adversarial_goal if is_adversarial else self.templates.aligned_goal
+
+        # ENHANCED: Include decision framework clarification
+        decision_framework = self.templates.decision_framework_template
         
         # Base prompt
         prompt = self.templates.base_template.format(
@@ -200,6 +219,7 @@ class PromptConfig:
             goal=goal,
             cognitive_resources=cognitive_resources,
             mechanism=mechanism,
+            decision_framework=decision_framework,
             portfolio_options=portfolio_options_str
         )
         
