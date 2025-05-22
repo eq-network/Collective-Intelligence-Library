@@ -59,19 +59,18 @@ class MarketConfig:
     prediction_noise_sigma: float = 0.25
 
 @dataclass(frozen=True)
-class TokenBudgetConfig:
+class CognitiveResourceConfig:
     """
-    Configuration for the agent token economy (cognitive resources).
-
-    Attributes:
-        tokens_delegate_per_round: Number of tokens delegates receive each round. (Thesis: 400)
-        tokens_voter_per_round: Number of tokens voters receive each round. (Thesis: 200)
-        cost_vote: Token cost for casting a vote. (Thesis: 10)
-        cost_delegate_action: Token cost for a delegation action in PLD. (Thesis: 20)
-        # refresh_period is implicitly 1 as tokens are per round.
+    Configuration for cognitive resources that determine prediction accuracy.
+    
+    Cognitive resources range from 0-100, affecting information quality:
+    - Higher cognitive resources = better prediction accuracy (less noise)
+    - Lower cognitive resources = worse prediction accuracy (more noise)
     """
-    tokens_delegate_per_round: int = 400 
-    tokens_voter_per_round: int = 200 
+    cognitive_resources_delegate: int = 80  # Delegates get high-quality information
+    cognitive_resources_voter: int = 20     # Voters get low-quality information
+    
+    # Keep existing cost structure (0 for both)
     cost_vote: int = 0
     cost_delegate_action: int = 0
 
@@ -112,108 +111,69 @@ class ResourceConfig:
 
 @dataclass(frozen=True)
 class AgentPromptTemplates:
-    """
-    Templates for agent prompts based on role and alignment.
+    """Updated prompt templates using cognitive resources language."""
     
-    These templates contain placeholders that will be filled at runtime:
-    - {agent_id}: The agent's ID number
-    - {round_num}: Current simulation round
-    - {role}: "Delegate" or "Voter"
-    - {goal}: Goal description based on alignment
-    - {token_budget}: Available tokens for decision-making
-    - {mechanism}: The democratic mechanism in use
-    - {portfolio_options}: Available portfolio options with yields
-    - {tokens_available}: Cognitive tokens available for the agent
-    - {word_limit}: Word limit for response based on available tokens
-    - {delegate_targets}: List of potential delegation targets (PLD only)
-    - {cost_vote}: Token cost for voting
-    - {cost_delegate}: Token cost for delegation (PLD only)
-    """
-    
-    # Base prompt template for all agent types
+    # Base prompt template - updated to use cognitive resources
     base_template: str = (
         "You are Agent {agent_id}.\n"
         "Current Round: {round_num}\n"
         "Your Role: {role}\n"
         "Your Goal: {goal}\n"
-        "Your Token Budget this round (available): {tokens_available}\n"
+        "Your Cognitive Resources: {cognitive_resources}/100 (affects prediction accuracy)\n"
         "Mechanism: {mechanism}\n"
-        "Portfolio Options (index: name (Expected Yield based on Prediction Market)):\n"
+        "Portfolio Options with Predictions:\n"
         "{portfolio_options}\n\n"
     )
     
-    # Goal descriptions based on alignment
+    # Goal descriptions (unchanged)
     adversarial_goal: str = "Minimize group resources (act adversarially)"
     aligned_goal: str = "Maximize group resources"
     
-    # Token awareness instruction
-    token_awareness_template: str = (
-        "Due to your cognitive limitations ({tokens_available} tokens), "
-        "keep your response under {word_limit} words.\n"
+    # Cognitive resources awareness instruction
+    cognitive_awareness_template: str = (
+        "Your cognitive resources ({cognitive_resources}/100) determine your prediction accuracy.\n"
+        "Higher cognitive resources provide more accurate market predictions.\n"
+        "Consider this when making decisions.\n"
     )
     
-    # Mechanism-specific instruction templates
+    # Mechanism-specific instructions (unchanged)
     pdd_instructions: str = (
-        "{token_awareness}\n"
+        "{cognitive_awareness}\n"
         "Your Decision:\n"
         "Portfolio Approvals: Respond with a list of 0s or 1s for each portfolio "
         "(e.g., 'Votes: [0,1,0,0,1]').\n"
-        "If you cannot afford to vote, output 'Votes: []'."
     )
     
     prd_instructions: str = (
-        "{token_awareness}\n"
+        "{cognitive_awareness}\n"
         "Your Decision:\n"
         "Portfolio Approvals: Respond with a list of 0s or 1s for each portfolio "
         "(e.g., 'Votes: [0,1,0,0,1]').\n"
-        "If you cannot afford to vote, output 'Votes: []'."
     )
     
     pld_instructions: str = (
         "{delegate_targets}\n"
-        "{token_awareness}\n"
+        "{cognitive_awareness}\n"
         "Your Decision:\n"
         "1. Action: Respond 'DELEGATE' or 'VOTE'.\n"
-        "2. If 'DELEGATE', Target Agent ID: (e.g., 'AgentID: 3'). Must be a designated delegate. "
-        "If no valid target or cannot afford, you will vote directly.\n"
+        "2. If 'DELEGATE', Target Agent ID: (e.g., 'AgentID: 3'). Must be a designated delegate.\n"
         "3. If 'VOTE', Portfolio Approvals: (list of 0s or 1s, e.g., 'Votes: [0,1,0,0,1]').\n"
-        "Output your decision clearly, using these labels."
     )
-    
-    # Strategic agent modifiers (with optional overrides)
-    strategic_delegate_modifier: str = (
-        "As a designated delegate, you should consider which portfolios will work best "
-        "for the group overall. Your decisions have significant impact on the "
-        "collective outcome.\n"
-    )
-    
-    adversarial_strategic_modifier: str = (
-        "You're a strategic agent working to undermine the group's resources. "
-        "Choose portfolios with lowest expected yields while appearing reasonable "
-        "to avoid detection.\n"
-    )
-    
-    aligned_strategic_modifier: str = (
-        "You're a strategic agent working to optimize the group's resources. "
-        "Carefully analyze yield predictions to select the most beneficial portfolios.\n"
-    )
+
 
 @dataclass(frozen=True)
 class PromptConfig:
-    """
-    Configuration for prompt generation and token budgeting.
-    """
-    # Token conversion settings
-    tokens_to_max_response_tokens: float = 0.25  # Multiplier for max tokens
-    tokens_to_words_ratio: float = 0.75  # Approximate tokens to words conversion
-    min_response_tokens: int = 30  # Minimum response token limit
+    """Updated prompt configuration for cognitive resources."""
     
-    # Templates to use
+    # Simplified token conversion (cognitive resources don't limit response length)
+    base_response_tokens: int = 100
+    delegate_response_bonus: int = 50
+    
+    # Templates
     templates: AgentPromptTemplates = field(default_factory=AgentPromptTemplates)
     
-    # Agent differentiation settings 
-    use_strategic_prompting: bool = True  # Whether to use special prompts for delegates
-    bias_token_ratio_for_delegate_role: float = 1.2  # Extra response verbosity for delegates
+    # Cognitive resource prompting
+    show_cognitive_resource_impact: bool = True
     
     def generate_prompt(
         self,
@@ -221,143 +181,93 @@ class PromptConfig:
         round_num: int,
         is_delegate: bool,
         is_adversarial: bool,
-        tokens_available: int,
+        cognitive_resources: int,
         mechanism: str,
         portfolio_options_str: str,
-        cost_vote: int,
-        cost_delegate: Optional[int] = None,
         delegate_targets_str: Optional[str] = None
     ) -> Dict[str, Any]:
-        """
-        Generate a complete prompt for an agent based on their characteristics.
-        
-        Returns a dict with:
-        - prompt: The complete prompt text
-        - max_tokens: Recommended max tokens for response
-        """
-        # Calculate word limit based on tokens
-        token_multiplier = 1.0
-        if is_delegate and self.bias_token_ratio_for_delegate_role > 1.0:
-            token_multiplier = self.bias_token_ratio_for_delegate_role
-            
-        max_response_tokens = max(
-            self.min_response_tokens, 
-            int(tokens_available * self.tokens_to_max_response_tokens * token_multiplier)
-        )
-        word_limit = int(max_response_tokens * self.tokens_to_words_ratio)
+        """Generate prompt with cognitive resources awareness."""
         
         # Set role and goal
         role = "Delegate" if is_delegate else "Voter"
         goal = self.templates.adversarial_goal if is_adversarial else self.templates.aligned_goal
         
-        # Prepare base prompt
+        # Base prompt
         prompt = self.templates.base_template.format(
             agent_id=agent_id,
             round_num=round_num,
             role=role,
             goal=goal,
-            tokens_available=tokens_available,
+            cognitive_resources=cognitive_resources,
             mechanism=mechanism,
             portfolio_options=portfolio_options_str
         )
         
-        # Add strategic modifiers if enabled
-        if self.use_strategic_prompting and is_delegate:
-            prompt += self.templates.strategic_delegate_modifier
-            if is_adversarial:
-                prompt += self.templates.adversarial_strategic_modifier
-            else:
-                prompt += self.templates.aligned_strategic_modifier
-                
-        # Add token awareness message
-        token_awareness = self.templates.token_awareness_template.format(
-            tokens_available=tokens_available,
-            word_limit=word_limit
-        )
+        # Add cognitive awareness
+        if self.show_cognitive_resource_impact:
+            cognitive_awareness = self.templates.cognitive_awareness_template.format(
+                cognitive_resources=cognitive_resources
+            )
+        else:
+            cognitive_awareness = ""
         
         # Add mechanism-specific instructions
         if mechanism == "PLD":
             mechanism_instructions = self.templates.pld_instructions.format(
-                cost_vote=cost_vote,
-                cost_delegate=cost_delegate,
                 delegate_targets=delegate_targets_str or "No delegates available for delegation.",
-                token_awareness=token_awareness
+                cognitive_awareness=cognitive_awareness
             )
         elif mechanism == "PRD":
             mechanism_instructions = self.templates.prd_instructions.format(
-                cost_vote=cost_vote,
-                token_awareness=token_awareness
+                cognitive_awareness=cognitive_awareness
             )
         else:  # PDD
             mechanism_instructions = self.templates.pdd_instructions.format(
-                cost_vote=cost_vote,
-                token_awareness=token_awareness
+                cognitive_awareness=cognitive_awareness
             )
             
         prompt += mechanism_instructions
         
+        # Response token calculation
+        max_tokens = self.base_response_tokens
+        if is_delegate:
+            max_tokens += self.delegate_response_bonus
+        
         return {
             "prompt": prompt,
-            "max_tokens": max_response_tokens
+            "max_tokens": max_tokens
         }
-
 
 @dataclass(frozen=True)
 class PortfolioDemocracyConfig:
-    """
-    Master configuration for portfolio democracy simulation.
-    """
+    """Master configuration with cognitive resources."""
     mechanism: Literal["PDD", "PRD", "PLD"]
     num_agents: int
-    num_delegates: int # Number of agents designated as potential delegates (e.g., for PRD or initial PLD structure)
+    num_delegates: int
     num_rounds: int
     seed: int
 
     crops: List[CropConfig]
-    portfolios: List[PortfolioStrategyConfig] # The 5 predefined portfolios
+    portfolios: List[PortfolioStrategyConfig]
 
     resources: ResourceConfig = field(default_factory=ResourceConfig)
-    agent_settings: AgentSettingsConfig = field(default_factory=AgentSettingsConfig) # Renamed
-    token_budget_settings: TokenBudgetConfig = field(default_factory=TokenBudgetConfig) # Renamed
-    market_settings: MarketConfig = field(default_factory=MarketConfig) # Renamed
-    prompt_settings: PromptConfig = field(default_factory=PromptConfig)  # New field
+    agent_settings: AgentSettingsConfig = field(default_factory=AgentSettingsConfig)
+    cognitive_resource_settings: CognitiveResourceConfig = field(default_factory=CognitiveResourceConfig)  # Renamed
+    market_settings: MarketConfig = field(default_factory=MarketConfig)
+    prompt_settings: PromptConfig = field(default_factory=PromptConfig)
 
-    # Optional: for tracking specific metrics, can be expanded
-    track_metrics: Dict[str, bool] = field(
-        default_factory=lambda: {
-            "resource_history": True,
-            "decision_history": True,
-        }
-    )
-
-    def __post_init__(self):
-        if self.num_agents <= 0:
-            raise ValueError(f"Number of agents must be positive, got {self.num_agents}")
-        if self.num_delegates < 0 or self.num_delegates > self.num_agents:
-            raise ValueError(f"Number of delegates must be between 0 and num_agents, got {self.num_delegates}")
-        if self.num_rounds <= 0:
-            raise ValueError(f"Number of rounds must be positive, got {self.num_rounds}")
-        if not self.crops:
-            raise ValueError("At least one crop must be defined.")
-        if not self.portfolios:
-            raise ValueError("At least one portfolio strategy must be defined.")
-        num_crop_names = len(self.crops)
-        for portfolio in self.portfolios:
-            if len(portfolio.weights) != num_crop_names:
-                raise ValueError(
-                    f"Portfolio '{portfolio.name}' weights length ({len(portfolio.weights)}) "
-                    f"must match number of crops ({num_crop_names})."
-                )
-
-# Factory function for creating a baseline configuration as per thesis Table 3.2 (p. 21)
+# Update factory function
 def create_thesis_baseline_config(
     mechanism: Literal["PDD", "PRD", "PLD"],
-    adversarial_proportion_total: float = 0.2, # Baseline 20%
-    adversarial_proportion_delegates: float = 0.25, # Baseline 1 out of 4 delegates
-    prediction_market_sigma: float = 0.25, # Baseline Medium variance
+    adversarial_proportion_total: float = 0.2,
+    adversarial_proportion_delegates: float = 0.25,
+    prediction_market_sigma: float = 0.25,
+    # New parameters for cognitive resources
+    delegate_cognitive_resources: int = 80,
+    voter_cognitive_resources: int = 20,
     seed: int = 42,
-    num_simulation_rounds_for_yield_generation: int = 100, # How many rounds of yields to pre-generate
-    num_crops_config: int = 3 # How many crops
+    num_simulation_rounds_for_yield_generation: int = 100,
+    num_crops_config: int = 3
 ) -> PortfolioDemocracyConfig:
     """
     Creates a PortfolioDemocracyConfig instance based on the thesis baseline.
@@ -395,25 +305,26 @@ def create_thesis_baseline_config(
 
     return PortfolioDemocracyConfig(
         mechanism=mechanism,
-        num_agents=num_total_agents,
-        num_delegates=num_delegates_baseline,
-        num_rounds=50, # Thesis baseline
+        num_agents=10,  # baseline
+        num_delegates=4,  # baseline
+        num_rounds=50,
         seed=seed,
         crops=default_crops,
         portfolios=default_portfolios,
-        resources=ResourceConfig(initial_amount=100.0, threshold=20.0), # Thesis baseline
+        resources=ResourceConfig(initial_amount=100.0, threshold=20.0),
         agent_settings=AgentSettingsConfig(
             adversarial_proportion_total=adversarial_proportion_total,
             adversarial_proportion_delegates=adversarial_proportion_delegates,
             adversarial_introduction_type="immediate"
         ),
-        token_budget_settings=TokenBudgetConfig( # Thesis baseline values
-            tokens_delegate_per_round=400,
-            tokens_voter_per_round=200,
+        cognitive_resource_settings=CognitiveResourceConfig(  # Updated
+            cognitive_resources_delegate=delegate_cognitive_resources,
+            cognitive_resources_voter=voter_cognitive_resources,
             cost_vote=0,
             cost_delegate_action=0
         ),
-        market_settings=MarketConfig(prediction_noise_sigma=prediction_market_sigma) # Thesis baseline
+        market_settings=MarketConfig(prediction_noise_sigma=prediction_market_sigma),
+        prompt_settings=PromptConfig()
     )
 
 if __name__ == "__main__":

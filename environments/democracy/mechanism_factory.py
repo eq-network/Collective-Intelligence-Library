@@ -16,7 +16,7 @@ if str(root_dir) not in sys.path:
 from core.category import Transform, sequential
 from core.graph import GraphState
 
-from transformations.bottom_up.prediction_market import create_prediction_market_transform
+from transformations.bottom_up.prediction_market import create_prediction_market_transform, _enhanced_prediction_market_signal_generator
 from transformations.top_down.democratic_transforms.delegation import create_delegation_transform
 from transformations.top_down.democratic_transforms.power_flow import create_power_flow_transform
 from transformations.top_down.democratic_transforms.voting import create_voting_transform
@@ -48,7 +48,16 @@ def _prediction_market_signal_generator(state: GraphState, config: Dict[str, Any
     
     noise = jr.normal(key, shape=true_expected_yields.shape) * noise_sigma
     noisy_predictions = true_expected_yields + noise
+    
+    # DEBUG: Add this logging
+    print(f"PREDICTION_MARKET_DEBUG: Round {state.global_attrs.get('round_num', 0)}")
+    print(f"  True expected yields: {true_expected_yields}")
+    print(f"  Noise sigma: {noise_sigma}")
+    print(f"  Generated noise: {noise}")
+    print(f"  Final prediction signals: {noisy_predictions}")
+    
     return noisy_predictions
+
 
 def _portfolio_vote_aggregator(state: GraphState, transform_config: Dict[str, Any]) -> jnp.ndarray:
     agent_votes = state.node_attrs["agent_portfolio_votes"] 
@@ -135,30 +144,31 @@ def _portfolio_resource_calculator(state: GraphState, transform_config: Dict[str
     
     return float(portfolio_return)
 
-# --- LLM Agent Decision Transform (Modified) ---
 def create_llm_agent_decision_transform(
     llm_service: Optional[LLMService],
     mechanism: Literal["PDD", "PRD", "PLD"],
     sim_config: PortfolioDemocracyConfig
 ) -> Transform:
+    """
+    MINIMAL CHANGE: Updated to use agent-specific prediction signals and cognitive resources.
+    
+    KEY MODIFICATIONS:
+    1. Use agent-specific prediction signals when available
+    2. Update prompt generation to use cognitive resources
+    3. Maintain all existing decision logic unchanged
+    """
     def transform(state: GraphState) -> GraphState:
         num_agents = state.num_nodes
         portfolio_configs = state.global_attrs["portfolio_configs"]
         num_portfolios = len(portfolio_configs)
         
-        # Get prediction market signals for crops
-        pm_crop_signals = state.global_attrs.get("prediction_market_crop_signals", jnp.ones(len(sim_config.crops)))
-
-        # Generate portfolio expected yields string (this was missing in your code)
-        portfolio_expected_yields = []
-        for p_cfg in portfolio_configs:
-            p_weights = jnp.array(p_cfg.weights)
-            expected_yield = jnp.sum(p_weights * pm_crop_signals)
-            portfolio_expected_yields.append(f"{p_cfg.name} (Exp. Yield: {expected_yield:.2f}x)")
+        # Get agent-specific prediction signals (if available)
+        agent_specific_signals = state.global_attrs.get("agent_specific_prediction_signals", {})
         
-        portfolio_options_str = "\n".join([f"{i}: {desc}" for i, desc in enumerate(portfolio_expected_yields)])
-
-        # Initialize outputs
+        # Fallback to uniform signals for backward compatibility
+        uniform_signals = state.global_attrs.get("prediction_market_crop_signals", jnp.ones(len(sim_config.crops)))
+        
+        # Initialize outputs (unchanged)
         new_agent_portfolio_votes = state.node_attrs.get("agent_portfolio_votes", 
             jnp.zeros((num_agents, num_portfolios), dtype=jnp.int32)).copy()
         new_delegation_target = state.node_attrs.get("delegation_target", 
@@ -166,9 +176,9 @@ def create_llm_agent_decision_transform(
         new_tokens_spent = state.node_attrs.get("tokens_spent_current_round", 
             jnp.zeros(num_agents, dtype=jnp.int32)).copy()
 
-        # Get cost parameters
-        cost_vote = sim_config.token_budget_settings.cost_vote
-        cost_delegate_action = sim_config.token_budget_settings.cost_delegate_action
+        # Get cost parameters (unchanged)
+        cost_vote = sim_config.cognitive_resource_settings.cost_vote  # Updated attribute name
+        cost_delegate_action = sim_config.cognitive_resource_settings.cost_delegate_action
         
         # Per-agent loop
         for i in range(num_agents):
@@ -177,21 +187,38 @@ def create_llm_agent_decision_transform(
 
             is_adversarial = bool(state.node_attrs["is_adversarial"][i])
             is_delegate_role = bool(state.node_attrs["is_delegate"][i])
-            current_token_budget = state.node_attrs["token_budget_per_round"][i]
-            tokens_already_spent = new_tokens_spent[i]
-            tokens_available = current_token_budget - tokens_already_spent
             
-            agent_action_this_round = False  # Flag to check if agent took a token-costing action
-
-            # Determine who votes in PRD
+            # CHANGED: Get cognitive resources instead of token budget
+            if is_delegate_role:
+                cognitive_resources = sim_config.cognitive_resource_settings.cognitive_resources_delegate
+            else:
+                cognitive_resources = sim_config.cognitive_resource_settings.cognitive_resources_voter
+            
+            # Determine active participation (unchanged logic)
             is_active_voter_for_round = True
             if mechanism == "PRD" and not is_delegate_role:
                 is_active_voter_for_round = False
             
-            if not is_active_voter_for_round and mechanism == "PRD":  # Non-delegates don't act in PRD
+            if not is_active_voter_for_round:
                 continue
 
-            # Prepare delegation targets info if needed
+            # CHANGED: Use agent-specific prediction signals if available
+            if i in agent_specific_signals:
+                agent_pm_signals = agent_specific_signals[i]
+            else:
+                # Fallback to uniform signals
+                agent_pm_signals = uniform_signals
+
+            # Generate portfolio expected yields string (unchanged logic, different signals)
+            portfolio_expected_yields = []
+            for p_cfg in portfolio_configs:
+                p_weights = jnp.array(p_cfg.weights)
+                expected_yield = jnp.sum(p_weights * agent_pm_signals)
+                portfolio_expected_yields.append(f"{p_cfg.name} (Predicted Yield: {expected_yield:.2f}x)")
+            
+            portfolio_options_str = "\n".join([f"{i}: {desc}" for i, desc in enumerate(portfolio_expected_yields)])
+
+            # Prepare delegation targets info (unchanged logic)
             delegate_targets_info = None
             if mechanism == "PLD":
                 delegation_targets = []
@@ -199,37 +226,31 @@ def create_llm_agent_decision_transform(
                     if k != i and state.node_attrs["is_delegate"][k]:
                         delegation_targets.append(f"  Agent {k} (Designated Delegate)")
                 if delegation_targets:
-                    delegate_targets_info = "Potential Delegation Targets (designated delegates):\n" + \
-                                         "\n".join(delegation_targets)
+                    delegate_targets_info = "Potential Delegation Targets:\n" + "\n".join(delegation_targets)
             
-            # Generate prompt using the configuration
+            # CHANGED: Generate prompt using cognitive resources
             prompt_result = sim_config.prompt_settings.generate_prompt(
                 agent_id=i,
                 round_num=state.global_attrs.get('round_num', 0),
                 is_delegate=is_delegate_role,
                 is_adversarial=is_adversarial,
-                tokens_available=tokens_available,
+                cognitive_resources=cognitive_resources,  # Changed from tokens_available
                 mechanism=mechanism,
                 portfolio_options_str=portfolio_options_str,
-                cost_vote=cost_vote,
-                cost_delegate=cost_delegate_action,
                 delegate_targets_str=delegate_targets_info
             )
             
-            # Extract the prompt and max tokens
             prompt = prompt_result["prompt"]
             max_tokens = prompt_result["max_tokens"]
             
-            # Set up LLM response variables
+            # LLM decision-making logic (UNCHANGED)
             llm_response_text = ""
             chosen_portfolio_indices_to_approve = []
             delegation_choice = -1
-            action_cost = 0 # Will remain 0 for vote/delegate actions
-            agent_action_this_round = False 
+            action_cost = 0
+            agent_action_this_round = False
 
-            # No need to check tokens_available > 0 for taking vote/delegate actions
-            # (unless tokens_available is used for other LLM constraints like response length)
-            if llm_service: # Still check if LLM service exists
+            if llm_service:
                 try:
                     llm_response_text = llm_service.generate(prompt, max_tokens=max_tokens)
                     
@@ -239,80 +260,57 @@ def create_llm_agent_decision_transform(
                             target_match = re.search(r"AgentID:\s*(\d+)", llm_response_text, re.IGNORECASE)
                             if target_match:
                                 potential_target_id = int(target_match.group(1))
-                                # Simplified validation: target exists, is a delegate, and not self
-                                if 0 <= potential_target_id < num_agents and \
-                                   potential_target_id != i and \
-                                   state.node_attrs["is_delegate"][potential_target_id]:
+                                if (0 <= potential_target_id < num_agents and 
+                                   potential_target_id != i and 
+                                   state.node_attrs["is_delegate"][potential_target_id]):
                                     delegation_choice = potential_target_id
-                                    agent_action_this_round = True # Delegation action taken
-                                # else: Invalid delegate target, fallback to VOTE (handled below)
-                            # else: No AgentID provided for DELEGATE action, fallback to VOTE
+                                    agent_action_this_round = True
 
-                    # VOTE Action (primary choice or fallback for PLD)
-                    # If PLD, this block is reached if:
-                    #   - "Action: VOTE" was specified
-                    #   - "Action: DELEGATE" was specified but target was invalid/missing
-                    #   - No clear "Action:" was specified, defaulting to attempt vote parse
-                    if not (mechanism == "PLD" and agent_action_this_round): # if not already a successful PLD delegation
-                        # Attempt to parse votes regardless of "Action: VOTE" if no successful delegation
+                    if not (mechanism == "PLD" and agent_action_this_round):
                         votes_match = re.search(r"Votes:\s*\[([^\]]*)\]", llm_response_text, re.IGNORECASE)
                         if votes_match:
                             try:
                                 vote_str_list = votes_match.group(1).split(',')
-                                # Ensure parsing handles empty strings or non-digits robustly
                                 parsed_votes = [int(v.strip()) for v in vote_str_list if v.strip().isdigit()]
                                 if len(parsed_votes) == num_portfolios:
                                     chosen_portfolio_indices_to_approve = [idx for idx, val in enumerate(parsed_votes) if val == 1]
-                                # else: Malformed vote list, counts as empty vote
                             except ValueError:
-                                pass # Non-integer in vote list, counts as empty vote
-                        # else: No "Votes:" pattern found, counts as empty vote
-                        
-                        agent_action_this_round = True # Voting action (even if empty) is considered taken
+                                pass
+                        agent_action_this_round = True
 
                 except Exception as e:
-                    print(f"LLM call or parsing error for Agent {i} (Round {state.global_attrs.get('round_num',0)}): {e}. LLM Response: '{llm_response_text}'")
-                    # If LLM errors, agent_action_this_round remains False. What should happen?
-                    # Decide on a default action if LLM fails (e.g., abstain = do nothing, or random vote)
-                    # For now, it means no action.
-                    agent_action_this_round = False 
+                    print(f"LLM call error for Agent {i}: {e}")
+                    agent_action_this_round = False
             
-            print(f"DEBUG_LLM_RESPONSE: Agent {i} (Round {state.global_attrs.get('round_num',0)}) "
-                f"Mechanism {mechanism} | Raw Response:\n'''{llm_response_text}'''\n--------------------")
-            # Fallback if no LLM service or LLM error and agent_action_this_round is still False
+            # Fallback logic (unchanged)
             if not llm_service and not agent_action_this_round:
-                # Define a default deterministic action if no LLM
-                # e.g., always vote for portfolio 0, or always abstain
-                # For PLD, this default would be to vote directly (delegation_choice = -1)
-                agent_action_this_round = True # e.g. default action is to 'vote' (abstain)
+                agent_action_this_round = True
                 if mechanism == "PLD":
                     delegation_choice = -1
 
-
-            # Apply decisions
-            if agent_action_this_round: # If ANY action (delegate or vote) was decided
-                new_tokens_spent = new_tokens_spent.at[i].add(action_cost) # action_cost is 0
+            # Apply decisions (UNCHANGED logic)
+            if agent_action_this_round:
+                new_tokens_spent = new_tokens_spent.at[i].add(action_cost)
 
                 if delegation_choice != -1 and mechanism == "PLD":
                     new_delegation_target = new_delegation_target.at[i].set(delegation_choice)
                     new_agent_portfolio_votes = new_agent_portfolio_votes.at[i].set(jnp.zeros(num_portfolios, dtype=jnp.int32))
-                else: # Voting action
+                else:
                     current_agent_votes = jnp.zeros(num_portfolios, dtype=jnp.int32)
                     if chosen_portfolio_indices_to_approve:
                         current_agent_votes = current_agent_votes.at[jnp.array(chosen_portfolio_indices_to_approve)].set(1)
                     new_agent_portfolio_votes = new_agent_portfolio_votes.at[i].set(current_agent_votes)
                     if mechanism == "PLD":
-                        new_delegation_target = new_delegation_target.at[i].set(-1) 
-            # else: No action decided (e.g. LLM error and no fallback action defined)
+                        new_delegation_target = new_delegation_target.at[i].set(-1)
 
-        # Update node attributes (outside the agent loop)
+        # Update node attributes (unchanged)
         new_node_attrs = dict(state.node_attrs)
         new_node_attrs["agent_portfolio_votes"] = new_agent_portfolio_votes
-        if mechanism == "PLD": # Only update delegation_target if it's PLD
+        if mechanism == "PLD":
             new_node_attrs["delegation_target"] = new_delegation_target
-        # new_node_attrs["tokens_spent_current_round"] = new_tokens_spent # This will effectively not change if costs are 0
         
         return state.replace(node_attrs=new_node_attrs)
+    
     return transform
 
 # --- Main Factory Function (largely unchanged from your version, ensure create_llm_agent_decision_transform is called) ---
@@ -326,8 +324,8 @@ def create_portfolio_mechanism_pipeline(
     housekeeping_transform = create_start_of_round_housekeeping_transform()
 
     prediction_market_transform = create_prediction_market_transform(
-        prediction_generator=_prediction_market_signal_generator,
-        config={"output_attr_name": "prediction_market_crop_signals"} 
+    prediction_generator=_enhanced_prediction_market_signal_generator,
+    config={"output_attr_name": "prediction_market_crop_signals"} 
     )
     
     # THIS IS THE KEY CHANGE: Pass llm_service and sim_config

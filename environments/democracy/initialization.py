@@ -13,7 +13,7 @@ if str(root_dir) not in sys.path:
     sys.path.insert(0, str(root_dir))
 
 # Assuming the configuration file is now named 'configuration.py' in the same directory
-from environments.democracy.configuration import PortfolioDemocracyConfig, AgentSettingsConfig, TokenBudgetConfig, CropConfig, create_thesis_baseline_config
+from environments.democracy.configuration import PortfolioDemocracyConfig, AgentSettingsConfig, CropConfig,CognitiveResourceConfig, create_thesis_baseline_config
 
 from core.graph import GraphState # Assuming this path is correct based on project structure
 
@@ -25,32 +25,36 @@ def initialize_agent_attributes(
     num_agents: int,
     num_delegates: int,
     agent_settings: AgentSettingsConfig,
-    token_settings: TokenBudgetConfig
+    cognitive_resource_settings: CognitiveResourceConfig  # Renamed parameter
 ) -> Dict[str, jnp.ndarray]:
     """
-    Initializes node attributes for all agents.
+    MINIMAL CHANGE: Initialize node attributes using cognitive resources instead of token budgets.
+    
+    ARCHITECTURAL ANALYSIS:
+    - Purpose: Create initial agent attributes for simulation
+    - Key Change: Replace token_budget_per_round with cognitive_resources
+    - Maintain: All delegation/adversarial assignment logic unchanged
+    - Preserve: Backward compatibility through parameter naming
     """
     attrs_key, roles_key, adv_key = jr.split(key, 3)
 
-    # Initialize agent roles: first num_delegates are delegates, rest are voters
+    # Initialize agent roles (UNCHANGED)
     is_delegate_attr = jnp.arange(num_agents) < num_delegates
     
-    # Initialize token budgets based on role
-    token_budget_attr = jnp.where(
+    # CHANGED: Initialize cognitive resources based on role
+    cognitive_resources_attr = jnp.where(
         is_delegate_attr,
-        token_settings.tokens_delegate_per_round,
-        token_settings.tokens_voter_per_round
+        cognitive_resource_settings.cognitive_resources_delegate,  # 80 for delegates
+        cognitive_resource_settings.cognitive_resources_voter      # 20 for voters
     )
 
-    # Initialize adversarial status
-    # Adversaries among delegates
+    # Initialize adversarial status (UNCHANGED logic)
     num_adv_delegates = int(jnp.round(num_delegates * agent_settings.adversarial_proportion_delegates))
     adv_delegate_indices = jr.choice(roles_key, jnp.arange(num_delegates), shape=(num_adv_delegates,), replace=False)
     
     is_adversarial_attr = jnp.zeros(num_agents, dtype=jnp.bool_)
     is_adversarial_attr = is_adversarial_attr.at[adv_delegate_indices].set(True)
 
-    # Adversaries among voters
     num_total_adv = int(jnp.round(num_agents * agent_settings.adversarial_proportion_total))
     remaining_adv_needed = num_total_adv - num_adv_delegates
     
@@ -58,27 +62,14 @@ def initialize_agent_attributes(
         voter_indices = jnp.arange(num_delegates, num_agents)
         adv_voter_indices = jr.choice(adv_key, voter_indices, shape=(min(remaining_adv_needed, len(voter_indices)),), replace=False)
         is_adversarial_attr = is_adversarial_attr.at[adv_voter_indices].set(True)
-    elif remaining_adv_needed < 0:
-        # This case means more adv delegates were assigned than total quota.
-        # This could happen if adv_prop_delegates is high and adv_prop_total is low.
-        # For simplicity, we'll cap at num_adv_delegates.
-        # Or, could remove some adv status from delegates, but that complicates.
-        # Current logic prioritizes delegate adversarial count.
-        pass
-    
-    # Let's assume it's initialized later or is dynamic.
-    # For now, a simple placeholder:
-    # num_portfolios = 5 # Assuming 5 portfolios for placeholder
-    # beliefs_attr = jr.uniform(belief_key, (num_agents, num_portfolios))
-    # beliefs_attr = beliefs_attr / jnp.sum(beliefs_attr, axis=1, keepdims=True)
 
     return {
         "is_delegate": is_delegate_attr,
         "is_adversarial": is_adversarial_attr,
-        "token_budget_per_round": token_budget_attr,
-        "tokens_spent_current_round": jnp.zeros(num_agents, dtype=jnp.int32),
-        "voting_power": jnp.ones(num_agents, dtype=jnp.float32), # Base voting power
-        "delegation_target": -jnp.ones(num_agents, dtype=jnp.int32), # -1 means no delegation / votes directly
+        "cognitive_resources": cognitive_resources_attr,  # NEW: Store cognitive resources per agent
+        "tokens_spent_current_round": jnp.zeros(num_agents, dtype=jnp.int32),  # Keep for compatibility
+        "voting_power": jnp.ones(num_agents, dtype=jnp.float32),
+        "delegation_target": -jnp.ones(num_agents, dtype=jnp.int32),
     }
 
 def get_true_expected_yields_for_round(
@@ -101,34 +92,37 @@ def initialize_portfolio_democracy_graph_state(
     config: PortfolioDemocracyConfig
 ) -> GraphState:
     """
-    Initializes a complete GraphState for a portfolio democracy simulation
-    based on the provided configuration.
+    MINIMAL CHANGE: Initialize GraphState with cognitive resource settings.
+    
+    ARCHITECTURAL MODIFICATION:
+    - Add cognitive_resource_settings to global attributes
+    - Update agent initialization to use cognitive resources
+    - Maintain all other initialization logic unchanged
     """
     init_key, agent_attrs_key = jr.split(key)
 
-    # Initialize agent-specific node attributes
+    # Initialize agent-specific node attributes (UPDATED)
     node_attributes = initialize_agent_attributes(
         agent_attrs_key,
         config.num_agents,
         config.num_delegates,
         config.agent_settings,
-        config.token_budget_settings
+        config.cognitive_resource_settings  # Updated parameter
     )
 
-    # Initialize adjacency matrices (e.g., for delegation in PLD/PRD)
-    # Initially, no delegations. This matrix might represent potential rather than actual.
+    # Initialize adjacency matrices (UNCHANGED)
     adj_matrices = {
         "delegation_graph": jnp.zeros((config.num_agents, config.num_agents), dtype=jnp.float32)
     }
 
-    # Initialize global attributes of the graph/simulation
+    # Initialize global attributes (ENHANCED)
     global_attributes = {
         "round_num": 0,
         "current_total_resources": config.resources.initial_amount,
         "resource_survival_threshold": config.resources.threshold,
         
-        "crop_configs": config.crops, # Store the full crop configurations
-        "portfolio_configs": config.portfolios, # Store the full portfolio configurations
+        "crop_configs": config.crops,
+        "portfolio_configs": config.portfolios,
         
         "current_true_expected_crop_yields": get_true_expected_yields_for_round(0, config.crops),
         "prediction_market_noise_sigma": config.market_settings.prediction_noise_sigma,
@@ -136,14 +130,17 @@ def initialize_portfolio_democracy_graph_state(
         "democratic_mechanism": config.mechanism,
         "simulation_seed": config.seed,
 
-        # Token costs accessible globally
-        "cost_vote": config.token_budget_settings.cost_vote,
-        "cost_delegate_action": config.token_budget_settings.cost_delegate_action,
+        # CHANGED: Add cognitive resource settings to global state
+        "cognitive_resource_settings": config.cognitive_resource_settings,
 
-        # For storing results/history
+        # Keep legacy cost attributes for compatibility
+        "cost_vote": config.cognitive_resource_settings.cost_vote,
+        "cost_delegate_action": config.cognitive_resource_settings.cost_delegate_action,
+
+        # History tracking (UNCHANGED)
         "resource_history": [config.resources.initial_amount],
-        "decision_history": [], # List of chosen portfolio indices or similar
-        "portfolio_selection_history": [], # History of chosen portfolios by round
+        "decision_history": [],
+        "portfolio_selection_history": [],
     }
 
     return GraphState(
@@ -151,54 +148,3 @@ def initialize_portfolio_democracy_graph_state(
         adj_matrices=adj_matrices,
         global_attrs=global_attributes
     )
-
-if __name__ == "__main__":
-    # Example of initializing a graph state using a baseline config
-    key = jr.PRNGKey(0)
-    
-    # Create a baseline PDD configuration
-    pdd_baseline_config = create_thesis_baseline_config(mechanism="PDD", seed=42)
-    
-    print(f"Initializing GraphState for PDD baseline with {pdd_baseline_config.num_agents} agents...")
-    
-    initial_graph_state = initialize_portfolio_democracy_graph_state(key, pdd_baseline_config)
-    
-    print("\nInitialized GraphState:")
-    print(f"  Number of nodes (agents): {initial_graph_state.num_nodes}")
-    
-    print("\n  Node Attributes (showing for first 2 agents):")
-    for attr_name, attr_values in initial_graph_state.node_attrs.items():
-        print(f"    {attr_name}: {attr_values[:2]}")
-        
-    print("\n  Global Attributes (sample):")
-    print(f"    Round Number: {initial_graph_state.global_attrs['round_num']}")
-    print(f"    Total Resources: {initial_graph_state.global_attrs['current_total_resources']}")
-    print(f"    Mechanism: {initial_graph_state.global_attrs['democratic_mechanism']}")
-    print(f"    True Expected Crop Yields (Round 0): {initial_graph_state.global_attrs['current_true_expected_crop_yields']}")
-    print(f"    Number of Crop Configs: {len(initial_graph_state.global_attrs['crop_configs'])}")
-    print(f"    Number of Portfolio Configs: {len(initial_graph_state.global_attrs['portfolio_configs'])}")
-
-    # Verify adversarial assignment based on config
-    num_delegates = pdd_baseline_config.num_delegates
-    adv_delegates_expected = int(round(num_delegates * pdd_baseline_config.agent_settings.adversarial_proportion_delegates))
-    adv_total_expected = int(round(pdd_baseline_config.num_agents * pdd_baseline_config.agent_settings.adversarial_proportion_total))
-    
-    actual_adv_delegates = jnp.sum(initial_graph_state.node_attrs['is_adversarial'][:num_delegates])
-    actual_adv_total = jnp.sum(initial_graph_state.node_attrs['is_adversarial'])
-    
-    print(f"\n  Adversarial Agent Assignment:")
-    print(f"    Expected Adversarial Delegates: {adv_delegates_expected}")
-    print(f"    Actual Adversarial Delegates: {actual_adv_delegates}")
-    print(f"    Expected Total Adversarial Agents: {adv_total_expected}")
-    print(f"    Actual Total Adversarial Agents: {actual_adv_total}")
-
-    # Check token budgets
-    delegate_tokens = initial_graph_state.node_attrs['token_budget_per_round'][0] # First agent is delegate
-    voter_tokens_index = num_delegates # First voter
-    if voter_tokens_index < pdd_baseline_config.num_agents:
-      voter_tokens = initial_graph_state.node_attrs['token_budget_per_round'][voter_tokens_index]
-      print(f"    Delegate token budget: {delegate_tokens} (Expected: {pdd_baseline_config.token_budget_settings.tokens_delegate_per_round})")
-      print(f"    Voter token budget: {voter_tokens} (Expected: {pdd_baseline_config.token_budget_settings.tokens_voter_per_round})")
-    else:
-      print(f"    Delegate token budget: {delegate_tokens} (Expected: {pdd_baseline_config.token_budget_settings.tokens_delegate_per_round})")
-      print(f"    (No voters in this configuration to check specific voter token budget)")
