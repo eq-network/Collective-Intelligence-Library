@@ -276,88 +276,178 @@ class PortfolioDemocracyConfig:
     market_settings: MarketConfig = field(default_factory=MarketConfig)
     prompt_settings: PromptConfig = field(default_factory=PromptConfig)
 
-# Update factory function
+    #PRD specific
+    prd_election_term_length: int = 4 # How many rounds reps serve
+    prd_num_representatives_to_elect: Optional[int] = None # If None, defaults to num_delegates
+
+
+# Updated factory function with 15 agents and 6 delegates
 def create_thesis_baseline_config(
     mechanism: Literal["PDD", "PRD", "PLD"],
+    # Parameters that can be swept by the experiment runner:
     adversarial_proportion_total: float = 0.2,
-    adversarial_proportion_delegates: float = 0.25,
+    seed: int = 42,
+    # Parameters that are usually fixed for a given "config type" but could be overridden:
+    num_total_agents: int = 15,
+    num_delegates_baseline: int = 6,
+    adversarial_proportion_delegates: float = 0.25, # Default, but might be tied to adv_prop_total
     prediction_market_sigma: float = 0.25,
-    # New parameters for cognitive resources
     delegate_cognitive_resources: int = 80,
     voter_cognitive_resources: int = 20,
-    seed: int = 42,
     num_simulation_rounds_for_yield_generation: int = 100,
-    num_crops_config: int = 3
+    num_crops_config: int = 3, # Specific to baseline
+    num_portfolios_config: int = 5, # Specific to baseline
+    crop_yield_variance_multiplier: float = 0.2, # Specific to baseline
+    num_simulation_rounds: int = 50
 ) -> PortfolioDemocracyConfig:
     """
-    Creates a PortfolioDemocracyConfig instance based on the thesis baseline.
+    Creates a PortfolioDemocracyConfig instance for the standard baseline.
     """
-    num_total_agents = 10
-    num_delegates_baseline = 4 # 4 delegates, 6 voters
-
-    yield_key = jr.PRNGKey(seed + 1000) # Use a different seed base for yields
+    yield_key = jr.PRNGKey(seed + 1000)
 
     default_crops = []
-    crop_names = ["CropA", "CropB", "CropC", "CropD", "CropE"][:num_crops_config]
+    # Use crop_names that can extend if num_crops_config changes
+    available_crop_names = ["CropA", "CropB", "CropC", "CropD", "CropE", "CropF"]
+    crop_names_to_use = available_crop_names[:num_crops_config]
 
     for i in range(num_crops_config):
         crop_key, yield_key = jr.split(yield_key)
-        # Generate random yields around a mean of 1.0
-        # Example: Normal distribution, clipped at 0.5 and 1.5 to keep it reasonable
-        # Adjust spread (scale) as needed. A scale of 0.2 means most values are 1.0 +/- 0.4 (2 sigma)
-        random_yields = jr.normal(crop_key, shape=(num_simulation_rounds_for_yield_generation,)) * 0.2 + 1.0
-        random_yields = jnp.clip(random_yields, 0.6, 1.4) # Ensure yields are not too extreme
+        random_yields = jr.normal(crop_key, shape=(num_simulation_rounds_for_yield_generation,)) * crop_yield_variance_multiplier + 1.0
+        min_clip = max(0.1, 1.0 - 3 * crop_yield_variance_multiplier)
+        max_clip = 1.0 + 3 * crop_yield_variance_multiplier
+        random_yields = jnp.clip(random_yields, min_clip, max_clip)
 
         default_crops.append(CropConfig(
-            name=crop_names[i],
-            true_expected_yields_per_round=list(random_yields), # Convert JAX array to list of floats
-            yield_beta_dist_alpha=5.0, yield_beta_dist_beta=5.0
+            name=crop_names_to_use[i],
+            true_expected_yields_per_round=list(random_yields),
+            yield_beta_dist_alpha=5.0, # Could also vary these with variance_multiplier
+            yield_beta_dist_beta=5.0
         ))
 
-    # Define 5 baseline portfolios (allocations from thesis example p.7, adapting tactical)
-    default_portfolios = [
-        PortfolioStrategyConfig(name="P1_Equal", weights=[0.333, 0.333, 0.334], description="Equal allocation"),
-        PortfolioStrategyConfig(name="P2_CropA_Focused", weights=[0.6, 0.2, 0.2], description="Crop A focused"),
-        PortfolioStrategyConfig(name="P3_CropB_Focused", weights=[0.2, 0.6, 0.2], description="Crop B focused"),
-        PortfolioStrategyConfig(name="P4_CropC_Focused", weights=[0.2, 0.2, 0.6], description="Crop C focused"),
-        PortfolioStrategyConfig(name="P5_TacticalFixed", weights=[0.1, 0.4, 0.5], description="Alternative tactical fixed allocation"),
-    ]
+    # Define portfolios based on num_crops_config and num_portfolios_config
+    default_portfolios = []
+    if num_crops_config > 0:
+        # P1: Equal
+        default_portfolios.append(PortfolioStrategyConfig(
+            name="P1_Equal", weights=[1.0/num_crops_config] * num_crops_config, description=f"Equal across {num_crops_config}"
+        ))
+        # P2 to P(N_crops+1): Focus on each crop
+        for i in range(min(num_crops_config, num_portfolios_config -1)): # ensure we don't create more than requested focus portfolios
+            weights = [0.1 / (num_crops_config -1 ) if num_crops_config > 1 else 0.0] * num_crops_config
+            weights[i] = 1.0 - sum(weights[:i] + weights[i+1:])
+            weights[i] = max(0.0, weights[i])
+            current_sum = sum(weights)
+            if current_sum > 0: weights = [w / current_sum for w in weights]
+            else: weights = [1.0/num_crops_config] * num_crops_config
+            default_portfolios.append(PortfolioStrategyConfig(
+                name=f"P{i+2}_{crop_names_to_use[i]}_Focus", weights=weights, description=f"{crop_names_to_use[i]} focused"
+            ))
+        # Add random tactical if more portfolios are requested than generated focus/equal
+        additional_needed = num_portfolios_config - len(default_portfolios)
+        portfolio_gen_key = jr.PRNGKey(seed + 2000)
+        for i in range(additional_needed):
+            portfolio_gen_key, sub_key = jr.split(portfolio_gen_key)
+            random_weights = jr.dirichlet(sub_key, alpha=jnp.ones(num_crops_config)).tolist()
+            default_portfolios.append(PortfolioStrategyConfig(
+                name=f"P{len(default_portfolios)+1}_TacticalRand{i+1}", weights=random_weights, description=f"Random tactical {i+1}"
+            ))
+    elif num_portfolios_config > 0 : # No crops, but portfolios requested
+         default_portfolios.append(PortfolioStrategyConfig(name="P1_NoOps", weights=[], description="No crops/ops"))
+
+
+    prd_term_length = 4
+    # Default num_representatives to num_delegates if not specified otherwise
+    prd_reps_to_elect = None 
 
     return PortfolioDemocracyConfig(
         mechanism=mechanism,
-        num_agents=10,  # baseline
-        num_delegates=4,  # baseline
-        num_rounds=50,
+        num_agents=num_total_agents,
+        num_delegates=num_delegates_baseline,
+        num_rounds=num_simulation_rounds,
         seed=seed,
         crops=default_crops,
-        portfolios=default_portfolios,
+        portfolios=default_portfolios, # This will now have `num_portfolios_config` items
         resources=ResourceConfig(initial_amount=100.0, threshold=20.0),
         agent_settings=AgentSettingsConfig(
             adversarial_proportion_total=adversarial_proportion_total,
-            adversarial_proportion_delegates=adversarial_proportion_delegates,
+            # Make the proportion of adversarial delegates equal to the total adversarial proportion
+            # This ensures the characteristic of adversarial presence scales consistently.
+            adversarial_proportion_delegates=adversarial_proportion_total,
             adversarial_introduction_type="immediate"
         ),
-        cognitive_resource_settings=CognitiveResourceConfig(  # Updated
+        cognitive_resource_settings=CognitiveResourceConfig(
             cognitive_resources_delegate=delegate_cognitive_resources,
             cognitive_resources_voter=voter_cognitive_resources,
             cost_vote=0,
             cost_delegate_action=0
         ),
         market_settings=MarketConfig(prediction_noise_sigma=prediction_market_sigma),
-        prompt_settings=PromptConfig()
+        prompt_settings=PromptConfig(),
+        prd_election_term_length=prd_term_length,
+        prd_num_representatives_to_elect=prd_reps_to_elect
+    )
+
+
+def create_thesis_highvariance_config(
+    mechanism: Literal["PDD", "PRD", "PLD"],
+    # Parameters that can be swept by the experiment runner:
+    adversarial_proportion_total: float, # Required, no default, as this is key to the sweep
+    seed: int = 42,
+    # Parameters that define this "high variance" scenario:
+    num_total_agents: int = 15,
+    num_delegates_baseline: int = 6,
+    prediction_market_sigma: float = 0.25, # Keep PM sigma same, or make it another variable
+    delegate_cognitive_resources: int = 80,
+    voter_cognitive_resources: int = 20,
+    num_simulation_rounds_for_yield_generation: int = 100,
+    num_simulation_rounds: int = 50, # Can adjust if needed for this scenario
+    # High variance specific settings:
+    num_crops_config: int = 5,
+    num_portfolios_config: int = 7, # e.g., P_Equal + 5 P_Focus + 1 P_Rand
+    crop_yield_variance_multiplier: float = 0.45 # Increased from 0.2
+) -> PortfolioDemocracyConfig:
+    """
+    Creates a PortfolioDemocracyConfig for a high-variance, higher complexity scenario.
+    - 5 crops
+    - 7 portfolio options
+    - Increased crop yield variance
+    """
+    # Most of the logic can be reused by calling the baseline and overriding,
+    # OR by passing these specific values to the baseline function if it accepts them all.
+    # Since create_thesis_baseline_config now accepts these, we can call it:
+    
+    return create_thesis_baseline_config(
+        mechanism=mechanism,
+        adversarial_proportion_total=adversarial_proportion_total,
+        seed=seed,
+        num_total_agents=num_total_agents,
+        num_delegates_baseline=num_delegates_baseline,
+        prediction_market_sigma=prediction_market_sigma,
+        delegate_cognitive_resources=delegate_cognitive_resources,
+        voter_cognitive_resources=voter_cognitive_resources,
+        num_simulation_rounds_for_yield_generation=num_simulation_rounds_for_yield_generation,
+        num_crops_config=num_crops_config, # Pass the high-variance value
+        num_portfolios_config=num_portfolios_config, # Pass the high-variance value
+        crop_yield_variance_multiplier=crop_yield_variance_multiplier, # Pass the high-variance value
+        num_simulation_rounds=num_simulation_rounds
     )
 
 if __name__ == "__main__":
-    # Example of creating a baseline configuration
-    pdd_config = create_thesis_baseline_config(mechanism="PDD")
-    print("PDD Baseline Configuration:")
-    print(f"  Mechanism: {pdd_config.mechanism}")
-    print(f"  Num Agents: {pdd_config.num_agents}, Num Delegates: {pdd_config.num_delegates}")
-    print(f"  Initial Resources: {pdd_config.resources.initial_amount}")
-    print(f"  Adversarial Total Prop: {pdd_config.agent_settings.adversarial_proportion_total}")
-    print(f"  Adversarial Delegate Prop: {pdd_config.agent_settings.adversarial_proportion_delegates}")
-    print(f"  PM Noise Sigma: {pdd_config.market_settings.prediction_noise_sigma}")
-    print(f"  Crops: {[c.name for c in pdd_config.crops]}")
-    print(f"  Portfolios: {[p.name for p in pdd_config.portfolios]}")
-    print(f"  A portfolio weight example: {pdd_config.portfolios[0].weights}")
-    print(f"  A crop yield example (first 5 rounds for CropA): {pdd_config.crops[0].true_expected_yields_per_round[:5]}")
+    # Example of creating configurations
+    baseline_pdd_config = create_thesis_baseline_config(mechanism="PDD", adversarial_proportion_total=0.1, seed=1)
+    print("--- Baseline PDD Config ---")
+    print(f"  Num Crops: {len(baseline_pdd_config.crops)}, Num Portfolios: {len(baseline_pdd_config.portfolios)}")
+    print(f"  Crop Names: {[c.name for c in baseline_pdd_config.crops]}")
+    print(f"  Portfolio Names: {[p.name for p in baseline_pdd_config.portfolios]}")
+    print(f"  A crop yield example (CropA, first 3): {baseline_pdd_config.crops[0].true_expected_yields_per_round[:3]}")
+
+
+    highvar_pld_config = create_thesis_highvariance_config(mechanism="PLD", adversarial_proportion_total=0.33, seed=2)
+    print("\n--- High Variance PLD Config ---")
+    print(f"  Num Crops: {len(highvar_pld_config.crops)}, Num Portfolios: {len(highvar_pld_config.portfolios)}")
+    print(f"  Crop Names: {[c.name for c in highvar_pld_config.crops]}")
+    print(f"  Portfolio Names: {[p.name for p in highvar_pld_config.portfolios]}")
+    print(f"  A crop yield example (CropA, first 3): {highvar_pld_config.crops[0].true_expected_yields_per_round[:3]}")
+    # Check one of the portfolio weights for 5 crops
+    if len(highvar_pld_config.portfolios) > 0 and len(highvar_pld_config.portfolios[0].weights) == 5:
+        print(f"  P1_Equal weights: {highvar_pld_config.portfolios[0].weights}")

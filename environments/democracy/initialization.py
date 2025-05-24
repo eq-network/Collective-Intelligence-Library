@@ -109,12 +109,14 @@ def initialize_portfolio_democracy_graph_state(
         config.agent_settings,
         config.cognitive_resource_settings  # Updated parameter
     )
+    # Add PRD-specific node attributes here
+    node_attributes["is_elected_representative"] = jnp.zeros(config.num_agents, dtype=jnp.bool_)
+    node_attributes["representative_term_remaining"] = jnp.zeros(config.num_agents, dtype=jnp.int32)
 
     # Initialize adjacency matrices (UNCHANGED)
     adj_matrices = {
         "delegation_graph": jnp.zeros((config.num_agents, config.num_agents), dtype=jnp.float32)
     }
-
     # Initialize global attributes (ENHANCED)
     global_attributes = {
         "round_num": 0,
@@ -129,6 +131,12 @@ def initialize_portfolio_democracy_graph_state(
         
         "democratic_mechanism": config.mechanism,
         "simulation_seed": config.seed,
+
+        # PRD Specific global attributes:
+        "rounds_until_next_election_prd": 0, # Countdown to next election
+        "prd_election_term_length": config.prd_election_term_length,
+        # If prd_num_representatives_to_elect is None, use num_delegates
+        "prd_num_representatives_to_elect": config.prd_num_representatives_to_elect if config.prd_num_representatives_to_elect is not None else config.num_delegates,
 
         # CHANGED: Add cognitive resource settings to global state
         "cognitive_resource_settings": config.cognitive_resource_settings,

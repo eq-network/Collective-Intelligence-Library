@@ -21,6 +21,7 @@ from transformations.top_down.democratic_transforms.delegation import create_del
 from transformations.top_down.democratic_transforms.power_flow import create_power_flow_transform
 from transformations.top_down.democratic_transforms.voting import create_voting_transform
 from transformations.top_down.resource import create_resource_transform
+from transformations.top_down.democratic_transforms.election import create_election_transform
 
 from environments.democracy.configuration import PortfolioDemocracyConfig, PortfolioStrategyConfig, CropConfig, PromptConfig
 from services.llm import LLMService # Import LLMService
@@ -193,8 +194,10 @@ def create_llm_agent_decision_transform(
             
             # Determine active participation (unchanged logic)
             is_active_voter_for_round = True
-            if mechanism == "PRD" and not is_delegate_role:
-                is_active_voter_for_round = False
+            if mechanism == "PRD":
+                # Only elected representatives actively make portfolio choices in PRD
+                if not state.node_attrs["is_elected_representative"][i]:
+                    is_active_voter_for_round = False
             
             if not is_active_voter_for_round:
                 continue
@@ -252,7 +255,7 @@ def create_llm_agent_decision_transform(
                     llm_response_text = llm_service.generate(prompt, max_tokens=max_tokens)
 
                     # DEBUG: Simple LLM response logging
-                    print(f"[LLM_RESPONSE] Agent {i}: {llm_response_text}")
+                    #print(f"[LLM_RESPONSE] Agent {i}: {llm_response_text}")
 
                     
                     if mechanism == "PLD":
@@ -324,6 +327,9 @@ def create_portfolio_mechanism_pipeline(
     
     housekeeping_transform = create_start_of_round_housekeeping_transform()
 
+    # Initialize election_transform_prd to None so it's always bound
+    election_transform_prd = None 
+
     prediction_market_transform = create_prediction_market_transform(
     prediction_generator=_enhanced_prediction_market_signal_generator,
     config={"output_attr_name": "prediction_market_crop_signals"} 
@@ -344,6 +350,7 @@ def create_portfolio_mechanism_pipeline(
         delegation_related_transforms = [delegation_update, power_flow]
     elif mechanism == "PRD":
         voting_config_key = "representative"
+        election_transform_prd = create_election_transform(election_logic="highest_cog_resource") # or "random_approval"
 
     voting_transform = create_voting_transform(
         vote_aggregator=_portfolio_vote_aggregator,
@@ -360,11 +367,17 @@ def create_portfolio_mechanism_pipeline(
             } 
     )
     
-    pipeline_steps = [
-        housekeeping_transform,
+    pipeline_steps = []
+    if election_transform_prd: # If PRD, election logic runs first (or after housekeeping)
+        pipeline_steps.append(housekeeping_transform)
+        pipeline_steps.append(election_transform_prd)
+    else:
+        pipeline_steps.append(housekeeping_transform)
+
+    pipeline_steps.extend([
         prediction_market_transform, 
         agent_decision_transform,    
-    ]
+    ])
     pipeline_steps.extend(delegation_related_transforms) 
     pipeline_steps.extend([
         voting_transform,            
