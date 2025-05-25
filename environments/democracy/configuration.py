@@ -2,8 +2,8 @@
 from dataclasses import dataclass, field
 from typing import Dict, List, Literal, Any, Optional
 
-import jax.random as jr # Add this import if not already there
-import jax.numpy as jnp # Add this import if not already there
+import jax.random as jr
+import jax.numpy as jnp
 
 @dataclass(frozen=True)
 class CropConfig:
@@ -24,27 +24,27 @@ class CropConfig:
     """
     name: str
     true_expected_yields_per_round: List[float]
-    yield_beta_dist_alpha: float = 2.0 # Default values, can be tuned for risk profiles
-    yield_beta_dist_beta: float = 2.0  # Default values, (mean of Beta(a,b) is a/(a+b))
+    yield_beta_dist_alpha: float = 2.0
+    yield_beta_dist_beta: float = 2.0
 
 
 @dataclass(frozen=True)
 class PortfolioStrategyConfig:
     """
     Configuration for a single portfolio allocation strategy.
-    (Matches existing structure, seems suitable for thesis portfolios)
     """
     name: str
-    weights: List[float] # Asset allocation weights (must sum to 1.0, length must match num_crops)
+    weights: List[float]  # Asset allocation weights (must sum to 1.0, length must match num_crops)
     description: str = ""
-    metadata: Dict[str, Any] = field(default_factory=dict) # Can hold risk_level or other info
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         weight_sum = sum(self.weights)
-        if not (0.999 <= weight_sum <= 1.001): # Allow for small float inaccuracies
+        if not (0.999 <= weight_sum <= 1.001):  # Allow for small float inaccuracies
             raise ValueError(f"Portfolio '{self.name}' weights must sum to 1.0, got {weight_sum}")
         if any(w < 0 for w in self.weights):
             raise ValueError(f"Portfolio '{self.name}' weights cannot be negative.")
+
 
 @dataclass(frozen=True)
 class MarketConfig:
@@ -57,6 +57,7 @@ class MarketConfig:
                                 Thesis baseline: sigma = 0.25.
     """
     prediction_noise_sigma: float = 0.25
+
 
 @dataclass(frozen=True)
 class CognitiveResourceConfig:
@@ -74,8 +75,9 @@ class CognitiveResourceConfig:
     cost_vote: int = 0
     cost_delegate_action: int = 0
 
+
 @dataclass(frozen=True)
-class AgentSettingsConfig: # Renamed from AgentConfig to avoid conflict if an Agent class exists
+class AgentSettingsConfig:
     """
     Configuration for the agent population characteristics.
 
@@ -84,34 +86,35 @@ class AgentSettingsConfig: # Renamed from AgentConfig to avoid conflict if an Ag
         adversarial_proportion_delegates: Fraction of *delegates* that are adversarial.
                                           (Thesis: 1/4 = 0.25 for baseline of 1 adv delegate out of 4)
         adversarial_introduction_type: How adversarial agents are introduced. (Thesis: "immediate")
-        # expertise_distribution can be added if needed, e.g., {"alpha": 2.0, "beta": 5.0} for Beta dist.
     """
     adversarial_proportion_total: float = 0.2
     adversarial_proportion_delegates: float = 0.25
     adversarial_introduction_type: Literal["immediate", "gradual"] = "immediate"
 
+
 @dataclass(frozen=True)
 class ResourceConfig:
     """
     Configuration for resource dynamics.
-    (Matches existing structure, seems suitable)
     """
-    initial_amount: float = 100.0 # Thesis baseline: 100
-    threshold: float = 20.0       # Thesis baseline: 20
-    # asset_names will be implicitly derived from the list of CropConfig objects.
+    initial_amount: float = 100.0  # Thesis baseline: 100
+    threshold: float = 20.0        # Thesis baseline: 20
 
     def __post_init__(self):
         if self.initial_amount <= 0.0:
             raise ValueError(f"Initial resources must be positive, got {self.initial_amount}")
         if self.threshold < 0.0:
             raise ValueError(f"Resource threshold cannot be negative, got {self.threshold}")
-        if self.threshold >= self.initial_amount: # Can be equal if initial state is already failure
-            pass # Allowing this for specific test cases, though generally threshold < initial_amount
+        if self.threshold >= self.initial_amount:
+            pass  # Allow for specific test cases where initial state is already at failure
 
 
 @dataclass(frozen=True)
 class AgentPromptTemplates:
-    # ENHANCED: Clarified goal descriptions with immediate impact emphasis
+    """
+    Complete prompt templates for cognitive resource-aware agent decision making.
+    """
+    # Core goal definitions - updated for cognitive resources
     adversarial_goal: str = (
         "Minimize group resources by choosing portfolios with LOWEST expected returns. "
         "Your decisions have IMMEDIATE effect on resource levels. "
@@ -125,14 +128,14 @@ class AgentPromptTemplates:
         "Higher yields increase resources (good for your goal), lower yields decrease resources (bad for your goal)."
     )
     
-    # NEW: Decision framework clarification
+    # Decision framework clarification
     decision_framework_template: str = (
         "IMPORTANT: Portfolio selection directly affects current round resources. "
         "The selected portfolio determines immediate resource multiplication. "
         "There are no complex multi-round effects - your choice impacts resources NOW.\n"
     )
     
-    # ENHANCED: Base prompt with decision framework integration
+    # Base prompt template with cognitive resources integration
     base_template: str = (
         "You are Agent {agent_id}.\n"
         "Current Round: {round_num}\n"
@@ -152,7 +155,7 @@ class AgentPromptTemplates:
         "Consider this when making decisions.\n"
     )
     
-    # Mechanism-specific instructions (unchanged)
+    # Mechanism-specific instructions
     pdd_instructions: str = (
         "{cognitive_awareness}\n"
         "Your Decision:\n"
@@ -179,19 +182,20 @@ class AgentPromptTemplates:
 
 @dataclass(frozen=True)
 class PromptConfig:
-    """Updated prompt configuration for cognitive resources."""
-    
-    # Simplified token conversion (cognitive resources don't limit response length)
+    """
+    Cognitive resource-aware prompt configuration system.
+    """
+    # Response configuration
     base_response_tokens: int = 300
     delegate_response_bonus: int = 150
     
-    # Templates
+    # Template system
     templates: AgentPromptTemplates = field(default_factory=AgentPromptTemplates)
     
     # Cognitive resource prompting
     show_cognitive_resource_impact: bool = True
     
-    def generate_prompt(
+    def generate_legacy_prompt(
         self,
         agent_id: int,
         round_num: int,
@@ -202,16 +206,30 @@ class PromptConfig:
         portfolio_options_str: str,
         delegate_targets_str: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Generate prompt with cognitive resources awareness."""
+        """
+        Generate legacy cognitive resource-aware prompt for agent decision making.
         
-        # Set role and goal
+        Args:
+            agent_id: Agent identifier
+            round_num: Current simulation round
+            is_delegate: Whether agent is a delegate
+            is_adversarial: Whether agent is adversarial
+            cognitive_resources: Agent's cognitive resource level (0-100)
+            mechanism: Democratic mechanism type (PDD/PRD/PLD)
+            portfolio_options_str: Formatted portfolio options with predictions
+            delegate_targets_str: Available delegation targets (PLD only)
+            
+        Returns:
+            Dictionary containing generated prompt and metadata
+        """
+        # Determine role and goal based on agent characteristics
         role = "Delegate" if is_delegate else "Voter"
         goal = self.templates.adversarial_goal if is_adversarial else self.templates.aligned_goal
 
-        # ENHANCED: Include decision framework clarification
+        # Include decision framework clarification
         decision_framework = self.templates.decision_framework_template
         
-        # Base prompt
+        # Generate base prompt
         prompt = self.templates.base_template.format(
             agent_id=agent_id,
             round_num=round_num,
@@ -223,7 +241,7 @@ class PromptConfig:
             portfolio_options=portfolio_options_str
         )
         
-        # Add cognitive awareness
+        # Add cognitive awareness if enabled
         if self.show_cognitive_resource_impact:
             cognitive_awareness = self.templates.cognitive_awareness_template.format(
                 cognitive_resources=cognitive_resources
@@ -248,19 +266,90 @@ class PromptConfig:
             
         prompt += mechanism_instructions
         
-        # Response token calculation
+        # Calculate response token allocation
         max_tokens = self.base_response_tokens
         if is_delegate:
             max_tokens += self.delegate_response_bonus
         
         return {
             "prompt": prompt,
-            "max_tokens": max_tokens
+            "max_tokens": max_tokens,
+            "cognitive_resources": cognitive_resources,
+            "mechanism": mechanism,
+            "role": role
         }
+
+    def generate_enhanced_prompt(
+        self,
+        agent_id: int,
+        round_num: int,
+        is_delegate: bool,
+        is_adversarial: bool,
+        cognitive_resources: int,
+        mechanism: str,
+        portfolio_options_str: str,
+        delegate_targets_str: Optional[str] = None,
+        performance_history_str: Optional[str] = None, # Added for enhanced version
+        optimality_analysis: Optional[str] = None      # Added for enhanced version
+    ) -> Dict[str, Any]:
+        """
+        Generate enhanced cognitive resource-aware prompt with optimality and history.
+        
+        Args:
+            agent_id: Agent identifier
+            round_num: Current simulation round
+            is_delegate: Whether agent is a delegate
+            is_adversarial: Whether agent is adversarial
+            cognitive_resources: Agent's cognitive resource level (0-100)
+            mechanism: Democratic mechanism type (PDD/PRD/PLD)
+            portfolio_options_str: Formatted portfolio options with predictions
+            delegate_targets_str: Available delegation targets (PLD only)
+            performance_history_str: Optional string of performance history
+            optimality_analysis: Optional string of optimality analysis
+            
+        Returns:
+            Dictionary containing generated prompt and metadata
+        """
+        # Determine role and goal based on agent characteristics
+        role = "Delegate" if is_delegate else "Voter"
+        goal = self.templates.adversarial_goal if is_adversarial else self.templates.aligned_goal
+
+        # Include decision framework clarification
+        decision_framework = self.templates.decision_framework_template
+        
+        # Base prompt
+        prompt = self.templates.base_template.format(
+            agent_id=agent_id,
+            round_num=round_num,
+            role=role,
+            goal=goal,
+            cognitive_resources=cognitive_resources,
+            mechanism=mechanism,
+            decision_framework=decision_framework,
+            portfolio_options=portfolio_options_str
+        )
+
+        # Add optimality analysis if available
+        if optimality_analysis:
+            prompt += f"\nOPTIMALITY ANALYSIS:\n{optimality_analysis}\n"
+
+        # Add performance history if available
+        if performance_history_str:
+            prompt += f"\nPERFORMANCE HISTORY (if relevant for decision):\n{performance_history_str}\n"
+
+        # For now, reuse legacy instructions, but this could be expanded
+        # This is a simplified version; a full implementation might have different templates
+        legacy_result = self.generate_legacy_prompt(
+            agent_id, round_num, is_delegate, is_adversarial, cognitive_resources, mechanism, portfolio_options_str, delegate_targets_str
+        )
+        prompt += legacy_result["prompt"].split(portfolio_options_str)[-1] # Append instructions part
+        return {"prompt": prompt, "max_tokens": legacy_result["max_tokens"], "cognitive_resources": cognitive_resources, "mechanism": mechanism, "role": role}
 
 @dataclass(frozen=True)
 class PortfolioDemocracyConfig:
-    """Master configuration with cognitive resources."""
+    """
+    Master configuration for portfolio democracy simulations with cognitive resources.
+    """
     mechanism: Literal["PDD", "PRD", "PLD"]
     num_agents: int
     num_delegates: int
@@ -272,41 +361,67 @@ class PortfolioDemocracyConfig:
 
     resources: ResourceConfig = field(default_factory=ResourceConfig)
     agent_settings: AgentSettingsConfig = field(default_factory=AgentSettingsConfig)
-    cognitive_resource_settings: CognitiveResourceConfig = field(default_factory=CognitiveResourceConfig)  # Renamed
+    cognitive_resource_settings: CognitiveResourceConfig = field(default_factory=CognitiveResourceConfig)
     market_settings: MarketConfig = field(default_factory=MarketConfig)
     prompt_settings: PromptConfig = field(default_factory=PromptConfig)
 
-    #PRD specific
-    prd_election_term_length: int = 4 # How many rounds reps serve
-    prd_num_representatives_to_elect: Optional[int] = None # If None, defaults to num_delegates
+    # PRD specific configuration
+    prd_election_term_length: int = 4
+    prd_num_representatives_to_elect: Optional[int] = None
+
+    # Attributes for enhanced prompting and analysis
+    use_redteam_prompts: bool = False
+    include_optimality_analysis: bool = False
+
+    def __post_init__(self):
+        """Validate configuration consistency."""
+        if self.num_delegates > self.num_agents:
+            raise ValueError(f"Number of delegates ({self.num_delegates}) cannot exceed number of agents ({self.num_agents})")
+        
+        if self.mechanism == "PRD" and self.prd_num_representatives_to_elect is None:
+            # Set default number of representatives to match delegates
+            object.__setattr__(self, 'prd_num_representatives_to_elect', self.num_delegates)
 
 
-# Updated factory function with 15 agents and 6 delegates
 def create_thesis_baseline_config(
     mechanism: Literal["PDD", "PRD", "PLD"],
-    # Parameters that can be swept by the experiment runner:
+    # Core parameters for experimental sweeps
     adversarial_proportion_total: float = 0.2,
     seed: int = 42,
-    # Parameters that are usually fixed for a given "config type" but could be overridden:
+    # Configuration parameters with sensible defaults
     num_total_agents: int = 15,
     num_delegates_baseline: int = 6,
-    adversarial_proportion_delegates: float = 0.25, # Default, but might be tied to adv_prop_total
     prediction_market_sigma: float = 0.25,
     delegate_cognitive_resources: int = 80,
     voter_cognitive_resources: int = 20,
     num_simulation_rounds_for_yield_generation: int = 100,
-    num_crops_config: int = 3, # Specific to baseline
-    num_portfolios_config: int = 5, # Specific to baseline
-    crop_yield_variance_multiplier: float = 0.2, # Specific to baseline
+    num_crops_config: int = 3,
+    num_portfolios_config: int = 5,
+    crop_yield_variance_multiplier: float = 0.2,
     num_simulation_rounds: int = 50
 ) -> PortfolioDemocracyConfig:
     """
-    Creates a PortfolioDemocracyConfig instance for the standard baseline.
+    Create a standardized baseline configuration for thesis experiments.
+    
+    This function generates a complete configuration with:
+    - Cognitive resource differentiation between delegates and voters
+    - Randomized crop yields with controlled variance
+    - Balanced portfolio options (equal weight + focused + tactical)
+    - Consistent adversarial agent distribution
+    
+    Args:
+        mechanism: Democratic mechanism type
+        adversarial_proportion_total: Total fraction of adversarial agents
+        seed: Random seed for reproducible generation
+        ... (other parameters with documented defaults)
+        
+    Returns:
+        Complete PortfolioDemocracyConfig ready for simulation
     """
     yield_key = jr.PRNGKey(seed + 1000)
 
+    # Generate crop configurations with controlled randomness
     default_crops = []
-    # Use crop_names that can extend if num_crops_config changes
     available_crop_names = ["CropA", "CropB", "CropC", "CropD", "CropE", "CropF"]
     crop_names_to_use = available_crop_names[:num_crops_config]
 
@@ -320,44 +435,55 @@ def create_thesis_baseline_config(
         default_crops.append(CropConfig(
             name=crop_names_to_use[i],
             true_expected_yields_per_round=list(random_yields),
-            yield_beta_dist_alpha=5.0, # Could also vary these with variance_multiplier
+            yield_beta_dist_alpha=5.0,
             yield_beta_dist_beta=5.0
         ))
 
-    # Define portfolios based on num_crops_config and num_portfolios_config
+    # Generate portfolio configurations
     default_portfolios = []
     if num_crops_config > 0:
-        # P1: Equal
+        # P1: Equal weight portfolio
         default_portfolios.append(PortfolioStrategyConfig(
-            name="P1_Equal", weights=[1.0/num_crops_config] * num_crops_config, description=f"Equal across {num_crops_config}"
+            name="P1_Equal", 
+            weights=[1.0/num_crops_config] * num_crops_config, 
+            description=f"Equal allocation across {num_crops_config} crops"
         ))
-        # P2 to P(N_crops+1): Focus on each crop
-        for i in range(min(num_crops_config, num_portfolios_config -1)): # ensure we don't create more than requested focus portfolios
-            weights = [0.1 / (num_crops_config -1 ) if num_crops_config > 1 else 0.0] * num_crops_config
+        
+        # P2 to P(N+1): Focused portfolios for each crop
+        for i in range(min(num_crops_config, num_portfolios_config - 1)):
+            weights = [0.1 / (num_crops_config - 1) if num_crops_config > 1 else 0.0] * num_crops_config
             weights[i] = 1.0 - sum(weights[:i] + weights[i+1:])
             weights[i] = max(0.0, weights[i])
             current_sum = sum(weights)
-            if current_sum > 0: weights = [w / current_sum for w in weights]
-            else: weights = [1.0/num_crops_config] * num_crops_config
+            if current_sum > 0: 
+                weights = [w / current_sum for w in weights]
+            else: 
+                weights = [1.0/num_crops_config] * num_crops_config
+            
             default_portfolios.append(PortfolioStrategyConfig(
-                name=f"P{i+2}_{crop_names_to_use[i]}_Focus", weights=weights, description=f"{crop_names_to_use[i]} focused"
+                name=f"P{i+2}_{crop_names_to_use[i]}_Focus", 
+                weights=weights, 
+                description=f"{crop_names_to_use[i]} focused allocation"
             ))
-        # Add random tactical if more portfolios are requested than generated focus/equal
+        
+        # Add tactical/random portfolios if more are needed
         additional_needed = num_portfolios_config - len(default_portfolios)
         portfolio_gen_key = jr.PRNGKey(seed + 2000)
         for i in range(additional_needed):
             portfolio_gen_key, sub_key = jr.split(portfolio_gen_key)
             random_weights = jr.dirichlet(sub_key, alpha=jnp.ones(num_crops_config)).tolist()
             default_portfolios.append(PortfolioStrategyConfig(
-                name=f"P{len(default_portfolios)+1}_TacticalRand{i+1}", weights=random_weights, description=f"Random tactical {i+1}"
+                name=f"P{len(default_portfolios)+1}_Tactical{i+1}", 
+                weights=random_weights, 
+                description=f"Tactical allocation {i+1}"
             ))
-    elif num_portfolios_config > 0 : # No crops, but portfolios requested
-         default_portfolios.append(PortfolioStrategyConfig(name="P1_NoOps", weights=[], description="No crops/ops"))
-
-
-    prd_term_length = 4
-    # Default num_representatives to num_delegates if not specified otherwise
-    prd_reps_to_elect = None 
+    elif num_portfolios_config > 0:
+        # Edge case: portfolios requested but no crops
+        default_portfolios.append(PortfolioStrategyConfig(
+            name="P1_NoOp", 
+            weights=[], 
+            description="No operations portfolio"
+        ))
 
     return PortfolioDemocracyConfig(
         mechanism=mechanism,
@@ -366,13 +492,11 @@ def create_thesis_baseline_config(
         num_rounds=num_simulation_rounds,
         seed=seed,
         crops=default_crops,
-        portfolios=default_portfolios, # This will now have `num_portfolios_config` items
+        portfolios=default_portfolios,
         resources=ResourceConfig(initial_amount=100.0, threshold=20.0),
         agent_settings=AgentSettingsConfig(
             adversarial_proportion_total=adversarial_proportion_total,
-            # Make the proportion of adversarial delegates equal to the total adversarial proportion
-            # This ensures the characteristic of adversarial presence scales consistently.
-            adversarial_proportion_delegates=adversarial_proportion_total,
+            adversarial_proportion_delegates=adversarial_proportion_total,  # Scale consistently
             adversarial_introduction_type="immediate"
         ),
         cognitive_resource_settings=CognitiveResourceConfig(
@@ -383,39 +507,45 @@ def create_thesis_baseline_config(
         ),
         market_settings=MarketConfig(prediction_noise_sigma=prediction_market_sigma),
         prompt_settings=PromptConfig(),
-        prd_election_term_length=prd_term_length,
-        prd_num_representatives_to_elect=prd_reps_to_elect
+        prd_election_term_length=4,
+        prd_num_representatives_to_elect=None  # Will be set to num_delegates by __post_init__
     )
 
 
 def create_thesis_highvariance_config(
     mechanism: Literal["PDD", "PRD", "PLD"],
-    # Parameters that can be swept by the experiment runner:
-    adversarial_proportion_total: float, # Required, no default, as this is key to the sweep
+    adversarial_proportion_total: float,  # Required parameter for sweeps
     seed: int = 42,
-    # Parameters that define this "high variance" scenario:
+    # High variance specific settings
     num_total_agents: int = 15,
     num_delegates_baseline: int = 6,
-    prediction_market_sigma: float = 0.25, # Keep PM sigma same, or make it another variable
+    prediction_market_sigma: float = 0.25,
     delegate_cognitive_resources: int = 80,
     voter_cognitive_resources: int = 20,
     num_simulation_rounds_for_yield_generation: int = 100,
-    num_simulation_rounds: int = 50, # Can adjust if needed for this scenario
-    # High variance specific settings:
+    num_simulation_rounds: int = 50,
+    # High variance parameters
     num_crops_config: int = 5,
-    num_portfolios_config: int = 7, # e.g., P_Equal + 5 P_Focus + 1 P_Rand
-    crop_yield_variance_multiplier: float = 0.45 # Increased from 0.2
+    num_portfolios_config: int = 7,
+    crop_yield_variance_multiplier: float = 0.45  # Increased variance
 ) -> PortfolioDemocracyConfig:
     """
-    Creates a PortfolioDemocracyConfig for a high-variance, higher complexity scenario.
-    - 5 crops
-    - 7 portfolio options
-    - Increased crop yield variance
-    """
-    # Most of the logic can be reused by calling the baseline and overriding,
-    # OR by passing these specific values to the baseline function if it accepts them all.
-    # Since create_thesis_baseline_config now accepts these, we can call it:
+    Create a high-variance configuration for stress testing democratic mechanisms.
     
+    This configuration increases complexity through:
+    - More crops (5 vs 3)
+    - More portfolio options (7 vs 5)
+    - Higher yield variance (0.45 vs 0.2)
+    
+    Args:
+        mechanism: Democratic mechanism type
+        adversarial_proportion_total: Total fraction of adversarial agents (required)
+        seed: Random seed for reproducible generation
+        ... (other parameters with high-variance defaults)
+        
+    Returns:
+        Complete PortfolioDemocracyConfig configured for high-variance testing
+    """
     return create_thesis_baseline_config(
         mechanism=mechanism,
         adversarial_proportion_total=adversarial_proportion_total,
@@ -426,28 +556,42 @@ def create_thesis_highvariance_config(
         delegate_cognitive_resources=delegate_cognitive_resources,
         voter_cognitive_resources=voter_cognitive_resources,
         num_simulation_rounds_for_yield_generation=num_simulation_rounds_for_yield_generation,
-        num_crops_config=num_crops_config, # Pass the high-variance value
-        num_portfolios_config=num_portfolios_config, # Pass the high-variance value
-        crop_yield_variance_multiplier=crop_yield_variance_multiplier, # Pass the high-variance value
+        num_crops_config=num_crops_config,
+        num_portfolios_config=num_portfolios_config,
+        crop_yield_variance_multiplier=crop_yield_variance_multiplier,
         num_simulation_rounds=num_simulation_rounds
     )
 
+
 if __name__ == "__main__":
-    # Example of creating configurations
-    baseline_pdd_config = create_thesis_baseline_config(mechanism="PDD", adversarial_proportion_total=0.1, seed=1)
-    print("--- Baseline PDD Config ---")
-    print(f"  Num Crops: {len(baseline_pdd_config.crops)}, Num Portfolios: {len(baseline_pdd_config.portfolios)}")
+    # Example usage and validation
+    baseline_pdd_config = create_thesis_baseline_config(
+        mechanism="PDD", 
+        adversarial_proportion_total=0.1, 
+        seed=1
+    )
+    print("--- Baseline PDD Configuration ---")
+    print(f"  Agents: {baseline_pdd_config.num_agents}, Delegates: {baseline_pdd_config.num_delegates}")
+    print(f"  Crops: {len(baseline_pdd_config.crops)}, Portfolios: {len(baseline_pdd_config.portfolios)}")
     print(f"  Crop Names: {[c.name for c in baseline_pdd_config.crops]}")
     print(f"  Portfolio Names: {[p.name for p in baseline_pdd_config.portfolios]}")
-    print(f"  A crop yield example (CropA, first 3): {baseline_pdd_config.crops[0].true_expected_yields_per_round[:3]}")
+    print(f"  Cognitive Resources - Delegates: {baseline_pdd_config.cognitive_resource_settings.cognitive_resources_delegate}, Voters: {baseline_pdd_config.cognitive_resource_settings.cognitive_resources_voter}")
+    print(f"  Sample Crop Yields (CropA, first 3): {baseline_pdd_config.crops[0].true_expected_yields_per_round[:3]}")
 
-
-    highvar_pld_config = create_thesis_highvariance_config(mechanism="PLD", adversarial_proportion_total=0.33, seed=2)
-    print("\n--- High Variance PLD Config ---")
-    print(f"  Num Crops: {len(highvar_pld_config.crops)}, Num Portfolios: {len(highvar_pld_config.portfolios)}")
+    highvar_pld_config = create_thesis_highvariance_config(
+        mechanism="PLD", 
+        adversarial_proportion_total=0.33, 
+        seed=2
+    )
+    print("\n--- High Variance PLD Configuration ---")
+    print(f"  Agents: {highvar_pld_config.num_agents}, Delegates: {highvar_pld_config.num_delegates}")
+    print(f"  Crops: {len(highvar_pld_config.crops)}, Portfolios: {len(highvar_pld_config.portfolios)}")
     print(f"  Crop Names: {[c.name for c in highvar_pld_config.crops]}")
     print(f"  Portfolio Names: {[p.name for p in highvar_pld_config.portfolios]}")
-    print(f"  A crop yield example (CropA, first 3): {highvar_pld_config.crops[0].true_expected_yields_per_round[:3]}")
-    # Check one of the portfolio weights for 5 crops
+    print(f"  Cognitive Resources - Delegates: {highvar_pld_config.cognitive_resource_settings.cognitive_resources_delegate}, Voters: {highvar_pld_config.cognitive_resource_settings.cognitive_resources_voter}")
+    print(f"  Sample Crop Yields (CropA, first 3): {highvar_pld_config.crops[0].true_expected_yields_per_round[:3]}")
+    
+    # Validate portfolio weights
     if len(highvar_pld_config.portfolios) > 0 and len(highvar_pld_config.portfolios[0].weights) == 5:
-        print(f"  P1_Equal weights: {highvar_pld_config.portfolios[0].weights}")
+        print(f"  P1_Equal weights (should sum to 1.0): {highvar_pld_config.portfolios[0].weights}")
+        print(f"  Weight sum: {sum(highvar_pld_config.portfolios[0].weights)}")

@@ -1,9 +1,8 @@
-# environments/democracy/mechanism_factory.py
-from typing import Literal, Dict, Any, Optional, Callable, List # Added List
+from typing import Literal, Dict, Any, Optional, Callable, List
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import re # For parsing LLM responses
+import re
 
 import sys
 from pathlib import Path
@@ -16,15 +15,29 @@ if str(root_dir) not in sys.path:
 from core.category import Transform, sequential
 from core.graph import GraphState
 
-from transformations.bottom_up.prediction_market import create_prediction_market_transform, _enhanced_prediction_market_signal_generator
+# Enhanced imports
+from environments.democracy.configuration import (
+    PortfolioDemocracyConfig, 
+    PromptConfig,
+    PortfolioStrategyConfig,
+    CropConfig,
+    create_thesis_baseline_config
+)
+from environments.democracy.optimality_analysis import (
+    OptimalityCalculator,
+    PerformanceAnalyzer,
+    calculate_optimality_for_state,
+    generate_optimality_prompt_text
+)
+from services.llm import LLMService
+
+# Import existing transforms (unchanged)
+from transformations.bottom_up.prediction_market import create_prediction_market_transform
 from transformations.top_down.democratic_transforms.delegation import create_delegation_transform
 from transformations.top_down.democratic_transforms.power_flow import create_power_flow_transform
 from transformations.top_down.democratic_transforms.voting import create_voting_transform
 from transformations.top_down.resource import create_resource_transform
 from transformations.top_down.democratic_transforms.election import create_election_transform
-
-from environments.democracy.configuration import PortfolioDemocracyConfig, PortfolioStrategyConfig, CropConfig, PromptConfig
-from services.llm import LLMService # Import LLMService
 
 # --- Helper Transforms and Calculators (largely unchanged from your version) ---
 
@@ -151,32 +164,34 @@ def create_llm_agent_decision_transform(
     sim_config: PortfolioDemocracyConfig
 ) -> Transform:
     """
-    MINIMAL CHANGE: Updated to use agent-specific prediction signals and cognitive resources.
+    LLM agent decision transform with ENHANCED debug output for responses.
     
-    KEY MODIFICATIONS:
-    1. Use agent-specific prediction signals when available
-    2. Update prompt generation to use cognitive resources
-    3. Maintain all existing decision logic unchanged
+    DEBUG STRATEGY:
+    - Show LLM response snippets for decision transparency
+    - Track agent decision patterns
+    - Provide round-level decision summaries
+    - Remove excessive technical details
     """
     def transform(state: GraphState) -> GraphState:
         num_agents = state.num_nodes
         portfolio_configs = state.global_attrs["portfolio_configs"]
         num_portfolios = len(portfolio_configs)
         
-        # Get agent-specific prediction signals (if available)
+        # Get agent-specific prediction signals
         agent_specific_signals = state.global_attrs.get("agent_specific_prediction_signals", {})
-
-        # Fallback to uniform signals for backward compatibility
         uniform_signals = state.global_attrs.get("prediction_market_crop_signals", jnp.ones(len(sim_config.crops)))
-
         
-        # Initialize outputs (unchanged)
+        # Initialize outputs
         new_agent_portfolio_votes = state.node_attrs.get("agent_portfolio_votes", 
             jnp.zeros((num_agents, num_portfolios), dtype=jnp.int32)).copy()
         new_delegation_target = state.node_attrs.get("delegation_target", 
             -jnp.ones(num_agents, dtype=jnp.int32)).copy()
         new_tokens_spent = state.node_attrs.get("tokens_spent_current_round", 
             jnp.zeros(num_agents, dtype=jnp.int32)).copy()
+
+        # Round-level decision tracking
+        round_num = state.global_attrs.get("round_num", 0)
+        decision_summary = []
 
         # Per-agent loop
         for i in range(num_agents):
@@ -186,30 +201,28 @@ def create_llm_agent_decision_transform(
             is_adversarial = bool(state.node_attrs["is_adversarial"][i])
             is_delegate_role = bool(state.node_attrs["is_delegate"][i])
             
-            # CHANGED: Get cognitive resources instead of token budget
+            # Get cognitive resources
             if is_delegate_role:
                 cognitive_resources = sim_config.cognitive_resource_settings.cognitive_resources_delegate
             else:
                 cognitive_resources = sim_config.cognitive_resource_settings.cognitive_resources_voter
             
-            # Determine active participation (unchanged logic)
+            # Determine active participation
             is_active_voter_for_round = True
             if mechanism == "PRD":
-                # Only elected representatives actively make portfolio choices in PRD
                 if not state.node_attrs["is_elected_representative"][i]:
                     is_active_voter_for_round = False
             
             if not is_active_voter_for_round:
                 continue
 
-            # CHANGED: Use agent-specific prediction signals if available
+            # Use agent-specific prediction signals if available
             if i in agent_specific_signals:
                 agent_pm_signals = agent_specific_signals[i]
             else:
-                # Fallback to uniform signals
                 agent_pm_signals = uniform_signals
 
-            # Generate portfolio expected yields string (unchanged logic, different signals)
+            # Generate portfolio expected yields string
             portfolio_expected_yields = []
             for p_cfg in portfolio_configs:
                 p_weights = jnp.array(p_cfg.weights)
@@ -218,7 +231,7 @@ def create_llm_agent_decision_transform(
             
             portfolio_options_str = "\n".join([f"{i}: {desc}" for i, desc in enumerate(portfolio_expected_yields)])
 
-            # Prepare delegation targets info (unchanged logic)
+            # Prepare delegation targets info
             delegate_targets_info = None
             if mechanism == "PLD":
                 delegation_targets = []
@@ -228,13 +241,13 @@ def create_llm_agent_decision_transform(
                 if delegation_targets:
                     delegate_targets_info = "Potential Delegation Targets:\n" + "\n".join(delegation_targets)
             
-            # CHANGED: Generate prompt using cognitive resources
+            # Generate prompt
             prompt_result = sim_config.prompt_settings.generate_prompt(
                 agent_id=i,
                 round_num=state.global_attrs.get('round_num', 0),
                 is_delegate=is_delegate_role,
                 is_adversarial=is_adversarial,
-                cognitive_resources=cognitive_resources,  # Changed from tokens_available
+                cognitive_resources=cognitive_resources,
                 mechanism=mechanism,
                 portfolio_options_str=portfolio_options_str,
                 delegate_targets_str=delegate_targets_info
@@ -243,7 +256,7 @@ def create_llm_agent_decision_transform(
             prompt = prompt_result["prompt"]
             max_tokens = prompt_result["max_tokens"]
             
-            # LLM decision-making logic (UNCHANGED)
+            # LLM decision-making logic with ENHANCED debugging
             llm_response_text = ""
             chosen_portfolio_indices_to_approve = []
             delegation_choice = -1
@@ -254,9 +267,10 @@ def create_llm_agent_decision_transform(
                 try:
                     llm_response_text = llm_service.generate(prompt, max_tokens=max_tokens)
 
-                    # DEBUG: Simple LLM response logging
-                    #print(f"[LLM_RESPONSE] Agent {i}: {llm_response_text}")
-
+                    # ENHANCED DEBUG: Show meaningful LLM response snippets
+                    response_snippet = llm_response_text[:100] + "..." if len(llm_response_text) > 100 else llm_response_text
+                    agent_role = "Delegate" if is_delegate_role else "Voter"
+                    agent_type = "Adversarial" if is_adversarial else "Aligned"
                     
                     if mechanism == "PLD":
                         action_match = re.search(r"Action:\s*(\w+)", llm_response_text, re.IGNORECASE)
@@ -269,6 +283,7 @@ def create_llm_agent_decision_transform(
                                    state.node_attrs["is_delegate"][potential_target_id]):
                                     delegation_choice = potential_target_id
                                     agent_action_this_round = True
+                                    decision_summary.append(f"A{i}({agent_type[0]}{agent_role[0]}) → DELEGATE to A{potential_target_id}")
 
                     if not (mechanism == "PLD" and agent_action_this_round):
                         votes_match = re.search(r"Votes:\s*\[([^\]]*)\]", llm_response_text, re.IGNORECASE)
@@ -278,21 +293,24 @@ def create_llm_agent_decision_transform(
                                 parsed_votes = [int(v.strip()) for v in vote_str_list if v.strip().isdigit()]
                                 if len(parsed_votes) == num_portfolios:
                                     chosen_portfolio_indices_to_approve = [idx for idx, val in enumerate(parsed_votes) if val == 1]
+                                    if chosen_portfolio_indices_to_approve:
+                                        portfolio_names = [portfolio_configs[idx].name for idx in chosen_portfolio_indices_to_approve]
+                                        decision_summary.append(f"A{i}({agent_type[0]}{agent_role[0]}) → VOTE {portfolio_names}")
                             except ValueError:
                                 pass
                         agent_action_this_round = True
 
                 except Exception as e:
-                    print(f"LLM call error for Agent {i}: {e}")
+                    print(f"[R{round_num:02d}] LLM error for Agent {i}: {e}")
                     agent_action_this_round = False
             
-            # Fallback logic (unchanged)
+            # Fallback logic
             if not llm_service and not agent_action_this_round:
                 agent_action_this_round = True
                 if mechanism == "PLD":
                     delegation_choice = -1
 
-            # Apply decisions (UNCHANGED logic)
+            # Apply decisions
             if agent_action_this_round:
                 new_tokens_spent = new_tokens_spent.at[i].add(action_cost)
 
@@ -307,7 +325,13 @@ def create_llm_agent_decision_transform(
                     if mechanism == "PLD":
                         new_delegation_target = new_delegation_target.at[i].set(-1)
 
-        # Update node attributes (unchanged)
+        # ENHANCED DEBUG: Round-level decision summary
+        if decision_summary and len(decision_summary) <= 5:  # Show max 5 for readability
+            print(f"[R{round_num:02d}] Agent Decisions: {' | '.join(decision_summary[:5])}")
+        elif decision_summary:
+            print(f"[R{round_num:02d}] Agent Decisions: {len(decision_summary)} agents made decisions")
+
+        # Update node attributes
         new_node_attrs = dict(state.node_attrs)
         new_node_attrs["agent_portfolio_votes"] = new_agent_portfolio_votes
         if mechanism == "PLD":
@@ -316,6 +340,7 @@ def create_llm_agent_decision_transform(
         return state.replace(node_attrs=new_node_attrs)
     
     return transform
+
 
 # --- Main Factory Function (largely unchanged from your version, ensure create_llm_agent_decision_transform is called) ---
 
@@ -331,7 +356,7 @@ def create_portfolio_mechanism_pipeline(
     election_transform_prd = None 
 
     prediction_market_transform = create_prediction_market_transform(
-    prediction_generator=_enhanced_prediction_market_signal_generator,
+    prediction_generator=_prediction_market_signal_generator,
     config={"output_attr_name": "prediction_market_crop_signals"} 
     )
     
@@ -386,3 +411,63 @@ def create_portfolio_mechanism_pipeline(
     ])
     
     return sequential(*pipeline_steps)
+
+def run_enhanced_mechanism_comparison():
+    """
+    Example function showing how to use the enhanced system for mechanism comparison.
+    
+    This demonstrates the complete integration of red team prompting and optimality analysis.
+    """
+    
+    print("🔴 Enhanced Mechanism Comparison with Red Team Prompting and Optimality Analysis")
+    print("=" * 80)
+    
+    # Create enhanced configurations
+    mechanisms = ["PDD", "PLD", "PRD"]
+    results = {}
+    
+    for mechanism in mechanisms:
+        print(f"\n🧪 Testing {mechanism} with enhanced prompting...")
+        
+        # Create enhanced configuration
+        config = create_enhanced_thesis_baseline_config(
+            mechanism=mechanism,
+            adversarial_proportion_total=0.3,
+            seed=12345,
+            use_redteam_prompts=True,
+            include_optimality_analysis=True
+        )
+        
+        print(f"  Configuration: {config.num_agents} agents, {config.num_delegates} delegates")
+        print(f"  Red team prompts: {config.use_redteam_prompts}")
+        print(f"  Optimality analysis: {config.include_optimality_analysis}")
+        
+        # Initialize simulation state
+        key = jr.PRNGKey(config.seed)
+        from environments.democracy.initialization import initialize_portfolio_democracy_graph_state
+        initial_state = initialize_portfolio_democracy_graph_state(key, config)
+        
+        # Calculate baseline optimality
+        try:
+            optimality = calculate_optimality_for_state(initial_state)
+            print(f"  Optimal portfolio: {optimality.optimal_choice} (return: {optimality.expected_returns[optimality.optimal_choice]:.3f}x)")
+            print(f"  Worst portfolio: {optimality.worst_choice} (return: {optimality.expected_returns[optimality.worst_choice]:.3f}x)")
+            
+            results[mechanism] = {
+                "config": config,
+                "initial_state": initial_state,
+                "optimality": optimality,
+                "status": "ready"
+            }
+        except Exception as e:
+            print(f"  ❌ Error: {e}")
+            results[mechanism] = {"status": "error", "error": str(e)}
+    
+    print(f"\n✅ Enhanced mechanism comparison setup complete")
+    print(f"   Ready to run simulations with {len([r for r in results.values() if r.get('status') == 'ready'])} mechanisms")
+    
+    return results
+
+if __name__ == "__main__":
+    # Run integration example
+    run_enhanced_mechanism_comparison()
