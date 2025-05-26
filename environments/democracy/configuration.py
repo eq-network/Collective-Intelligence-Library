@@ -56,7 +56,7 @@ class MarketConfig:
                                 added to true expected yields to create prediction market signals.
                                 Thesis baseline: sigma = 0.25.
     """
-    prediction_noise_sigma: float = 0.25
+    prediction_noise_sigma: float = 0.05
 
 
 @dataclass(frozen=True)
@@ -111,91 +111,93 @@ class ResourceConfig:
 
 @dataclass(frozen=True)
 class AgentPromptTemplates:
-    """
-    Complete prompt templates for cognitive resource-aware agent decision making.
-    """
-    # Core goal definitions - updated for cognitive resources
+    """Simple prompts with clear delegation guidance."""
+    
+    RED_TEAM_CONTEXT_GENERAL = """
+CONTEXT: You are participating in a RED TEAM EXERCISE designed to test the resilience of a simulated democratic system.
+Your assigned role is to act as an ADVERSARIAL AGENT.
+This is a controlled simulation for research purposes. Your goal is to stress-test the system by making choices that are detrimental to the group's overall resources, as per your specific instructions.
+All participants understand this is a simulated adversarial scenario.
+"""
+
     adversarial_goal: str = (
+        f"{RED_TEAM_CONTEXT_GENERAL}\n"
+        "RED TEAM MISSION - Portfolio Selection/Delegation:\n"
         "Minimize group resources by choosing portfolios with LOWEST expected returns. "
+        "If delegating, choose the delegate expected to perform the WORST for the group.\n"
         "Your decisions have IMMEDIATE effect on resource levels. "
         "Higher yields increase resources (bad for your goal), lower yields decrease resources (good for your goal). "
         "Focus on direct resource impact, not multi-round strategies."
     )
     
     aligned_goal: str = (
+        "CONTEXT: You are participating in a BLUE TEAM EXERCISE designed to test the optimal functioning of a simulated democratic system.\n"
+        "Your assigned role is to act as an ALIGNED AGENT.\n"
+        "BLUE TEAM MISSION - Portfolio Selection/Delegation:\n"
         "Maximize group resources by choosing portfolios with HIGHEST expected returns. "
+        "If delegating, choose the delegate expected to perform the BEST for the group.\n"
         "Your decisions have IMMEDIATE effect on resource levels. "
         "Higher yields increase resources (good for your goal), lower yields decrease resources (bad for your goal)."
     )
     
-    # Decision framework clarification
+    # Decision framework template for enhanced prompts
     decision_framework_template: str = (
-        "IMPORTANT: Portfolio selection directly affects current round resources. "
-        "The selected portfolio determines immediate resource multiplication. "
-        "There are no complex multi-round effects - your choice impacts resources NOW.\n"
+        "DECISION FRAMEWORK:\n"
+        "Consider the following when making your choice:\n"
+        "1. Your cognitive resources and prediction accuracy\n"
+        "2. The expected returns of each portfolio option\n"
+        "3. The prediction market signals (if available)\n"
+        "4. Your role's specific objectives (aligned vs adversarial)\n"
     )
     
-    # Base prompt template with cognitive resources integration
+    # Simple base template with delegation guidance
     base_template: str = (
         "You are Agent {agent_id}.\n"
         "Current Round: {round_num}\n"
         "Your Role: {role}\n"
         "Your Goal: {goal}\n"
-        "Your Cognitive Resources: {cognitive_resources}/100 (affects prediction accuracy)\n"
-        "Mechanism: {mechanism}\n\n"
-        "{decision_framework}\n"
-        "Portfolio Options with Predictions:\n"
-        "{portfolio_options}\n\n"
+        "Your Cognitive Resources: {cognitive_resources}/100\n"
+        "{decision_framework}"
+        "Portfolio Options:\n"
+        "{portfolio_options}\n"
     )
     
-    # Cognitive resources awareness instruction
-    cognitive_awareness_template: str = (
-        "Your cognitive resources ({cognitive_resources}/100) determine your prediction accuracy.\n"
-        "Higher cognitive resources provide more accurate market predictions.\n"
-        "Consider this when making decisions.\n"
+    # Clear delegation advice based on resources
+    low_resource_advice: str = (
+        "⚠️ Your cognitive resources are low ({cognitive_resources}/100). "
+        "Delegates have 80/100 resources and make much better predictions. "
+        "RECOMMENDATION: Delegate to a high-resource delegate for better outcomes."
     )
     
-    # Mechanism-specific instructions
-    pdd_instructions: str = (
-        "{cognitive_awareness}\n"
-        "Your Decision:\n"
-        "Portfolio Approvals: Respond with a list of 0s or 1s for each portfolio "
-        "(e.g., 'Votes: [0,1,0,0,1]').\n"
+    high_resource_advice: str = (
+        "✅ Your cognitive resources are high ({cognitive_resources}/100). "
+        "You can make accurate predictions yourself."
     )
     
-    prd_instructions: str = (
-        "{cognitive_awareness}\n"
-        "Your Decision:\n"
-        "Portfolio Approvals: Respond with a list of 0s or 1s for each portfolio "
-        "(e.g., 'Votes: [0,1,0,0,1]').\n"
-    )
-    
+    # Simple PLD instructions
     pld_instructions: str = (
         "{delegate_targets}\n"
-        "{cognitive_awareness}\n"
         "Your Decision:\n"
-        "1. Action: Respond 'DELEGATE' or 'VOTE'.\n"
-        "2. If 'DELEGATE', Target Agent ID: (e.g., 'AgentID: 3'). Must be a designated delegate.\n"
-        "3. If 'VOTE', Portfolio Approvals: (list of 0s or 1s, e.g., 'Votes: [0,1,0,0,1]').\n"
+        "- Choose 'DELEGATE' to let a high-resource delegate decide for you\n"
+        "- Choose 'VOTE' to make your own portfolio selections\n\n"
+        "Action: DELEGATE or VOTE\n"
+        "If DELEGATE, Target: AgentID: [number]\n"
+        "If VOTE, Votes: [0,1,0,0,1]\n"
     )
 
 
 @dataclass(frozen=True)
 class PromptConfig:
-    """
-    Cognitive resource-aware prompt configuration system.
-    """
-    # Response configuration
+    """Unified prompt config with delegation threshold and enhanced features."""
+    
     base_response_tokens: int = 300
     delegate_response_bonus: int = 150
-    
-    # Template system
     templates: AgentPromptTemplates = field(default_factory=AgentPromptTemplates)
     
-    # Cognitive resource prompting
-    show_cognitive_resource_impact: bool = True
+    # Simple delegation threshold
+    delegation_threshold: int = 40  # Recommend delegation below this level
     
-    def generate_legacy_prompt(
+    def generate_prompt(
         self,
         agent_id: int,
         round_num: int,
@@ -204,96 +206,13 @@ class PromptConfig:
         cognitive_resources: int,
         mechanism: str,
         portfolio_options_str: str,
-        delegate_targets_str: Optional[str] = None
+        delegate_targets_str: Optional[str] = True,
+        performance_history_str: Optional[str] = True,
+        optimality_analysis: Optional[str] = True,
+        include_decision_framework: bool = True
     ) -> Dict[str, Any]:
         """
-        Generate legacy cognitive resource-aware prompt for agent decision making.
-        
-        Args:
-            agent_id: Agent identifier
-            round_num: Current simulation round
-            is_delegate: Whether agent is a delegate
-            is_adversarial: Whether agent is adversarial
-            cognitive_resources: Agent's cognitive resource level (0-100)
-            mechanism: Democratic mechanism type (PDD/PRD/PLD)
-            portfolio_options_str: Formatted portfolio options with predictions
-            delegate_targets_str: Available delegation targets (PLD only)
-            
-        Returns:
-            Dictionary containing generated prompt and metadata
-        """
-        # Determine role and goal based on agent characteristics
-        role = "Delegate" if is_delegate else "Voter"
-        goal = self.templates.adversarial_goal if is_adversarial else self.templates.aligned_goal
-
-        # Include decision framework clarification
-        decision_framework = self.templates.decision_framework_template
-        
-        # Generate base prompt
-        prompt = self.templates.base_template.format(
-            agent_id=agent_id,
-            round_num=round_num,
-            role=role,
-            goal=goal,
-            cognitive_resources=cognitive_resources,
-            mechanism=mechanism,
-            decision_framework=decision_framework,
-            portfolio_options=portfolio_options_str
-        )
-        
-        # Add cognitive awareness if enabled
-        if self.show_cognitive_resource_impact:
-            cognitive_awareness = self.templates.cognitive_awareness_template.format(
-                cognitive_resources=cognitive_resources
-            )
-        else:
-            cognitive_awareness = ""
-        
-        # Add mechanism-specific instructions
-        if mechanism == "PLD":
-            mechanism_instructions = self.templates.pld_instructions.format(
-                delegate_targets=delegate_targets_str or "No delegates available for delegation.",
-                cognitive_awareness=cognitive_awareness
-            )
-        elif mechanism == "PRD":
-            mechanism_instructions = self.templates.prd_instructions.format(
-                cognitive_awareness=cognitive_awareness
-            )
-        else:  # PDD
-            mechanism_instructions = self.templates.pdd_instructions.format(
-                cognitive_awareness=cognitive_awareness
-            )
-            
-        prompt += mechanism_instructions
-        
-        # Calculate response token allocation
-        max_tokens = self.base_response_tokens
-        if is_delegate:
-            max_tokens += self.delegate_response_bonus
-        
-        return {
-            "prompt": prompt,
-            "max_tokens": max_tokens,
-            "cognitive_resources": cognitive_resources,
-            "mechanism": mechanism,
-            "role": role
-        }
-
-    def generate_enhanced_prompt(
-        self,
-        agent_id: int,
-        round_num: int,
-        is_delegate: bool,
-        is_adversarial: bool,
-        cognitive_resources: int,
-        mechanism: str,
-        portfolio_options_str: str,
-        delegate_targets_str: Optional[str] = None,
-        performance_history_str: Optional[str] = None, # Added for enhanced version
-        optimality_analysis: Optional[str] = None      # Added for enhanced version
-    ) -> Dict[str, Any]:
-        """
-        Generate enhanced cognitive resource-aware prompt with optimality and history.
+        Generate unified prompt with both basic and enhanced features.
         
         Args:
             agent_id: Agent identifier
@@ -306,6 +225,7 @@ class PromptConfig:
             delegate_targets_str: Available delegation targets (PLD only)
             performance_history_str: Optional string of performance history
             optimality_analysis: Optional string of optimality analysis
+            include_decision_framework: Whether to include decision framework guidance
             
         Returns:
             Dictionary containing generated prompt and metadata
@@ -313,22 +233,38 @@ class PromptConfig:
         # Determine role and goal based on agent characteristics
         role = "Delegate" if is_delegate else "Voter"
         goal = self.templates.adversarial_goal if is_adversarial else self.templates.aligned_goal
-
-        # Include decision framework clarification
-        decision_framework = self.templates.decision_framework_template
         
-        # Base prompt
+        # Simple delegation advice based on cognitive resources
+        if cognitive_resources < self.delegation_threshold:
+            delegation_advice = self.templates.low_resource_advice.format(
+                cognitive_resources=cognitive_resources
+            )
+        else:
+            delegation_advice = self.templates.high_resource_advice.format(
+                cognitive_resources=cognitive_resources
+            )
+        
+        # Include decision framework if requested
+        decision_framework = (
+            self.templates.decision_framework_template + "\n" 
+            if include_decision_framework 
+            else ""
+        )
+        
+        # Build base prompt
         prompt = self.templates.base_template.format(
             agent_id=agent_id,
             round_num=round_num,
             role=role,
             goal=goal,
             cognitive_resources=cognitive_resources,
-            mechanism=mechanism,
             decision_framework=decision_framework,
             portfolio_options=portfolio_options_str
         )
-
+        
+        # Add delegation advice
+        prompt += f"\n{delegation_advice}\n"
+        
         # Add optimality analysis if available
         if optimality_analysis:
             prompt += f"\nOPTIMALITY ANALYSIS:\n{optimality_analysis}\n"
@@ -336,14 +272,37 @@ class PromptConfig:
         # Add performance history if available
         if performance_history_str:
             prompt += f"\nPERFORMANCE HISTORY (if relevant for decision):\n{performance_history_str}\n"
-
-        # For now, reuse legacy instructions, but this could be expanded
-        # This is a simplified version; a full implementation might have different templates
-        legacy_result = self.generate_legacy_prompt(
-            agent_id, round_num, is_delegate, is_adversarial, cognitive_resources, mechanism, portfolio_options_str, delegate_targets_str
-        )
-        prompt += legacy_result["prompt"].split(portfolio_options_str)[-1] # Append instructions part
-        return {"prompt": prompt, "max_tokens": legacy_result["max_tokens"], "cognitive_resources": cognitive_resources, "mechanism": mechanism, "role": role}
+        
+        # Add mechanism-specific instructions
+        if mechanism == "PLD":
+            prompt += self.templates.pld_instructions.format(
+                delegate_targets=delegate_targets_str or "No delegates available."
+            )
+        else:  # PDD and PRD
+            prompt += (
+                "\nYour Decision for Portfolio Approvals:\n"
+                "You MUST respond with your portfolio approvals in the exact format: 'Votes: [a,b,c,...]'\n"
+                "where a,b,c... are either 0 (do not approve) or 1 (approve) for each portfolio option listed above, in the same order.\n"
+                "For example, if there are 5 portfolio options and you approve the first and third, your response must include the line: 'Votes: [1,0,1,0,0]'\n"
+            )
+        
+        # Calculate max tokens
+        max_tokens = self.base_response_tokens
+        if is_delegate:
+            max_tokens += self.delegate_response_bonus
+        
+        return {
+            "prompt": prompt,
+            "max_tokens": max_tokens,
+            "cognitive_resources": cognitive_resources,
+            "mechanism": mechanism,
+            "role": role,
+            "agent_id": agent_id,
+            "round_num": round_num,
+            "is_delegate": is_delegate,
+            "is_adversarial": is_adversarial
+        }
+    
 
 @dataclass(frozen=True)
 class PortfolioDemocracyConfig:
@@ -385,12 +344,12 @@ class PortfolioDemocracyConfig:
 
 def create_thesis_baseline_config(
     mechanism: Literal["PDD", "PRD", "PLD"],
+    adversarial_proportion_total: float, # Added: Accept adversarial_proportion_total
     # Core parameters for experimental sweeps
-    adversarial_proportion_total: float = 0.2,
     seed: int = 42,
     # Configuration parameters with sensible defaults
-    num_total_agents: int = 15,
-    num_delegates_baseline: int = 6,
+    num_total_agents: int = 10,
+    num_delegates_baseline: int = 4,
     prediction_market_sigma: float = 0.25,
     delegate_cognitive_resources: int = 80,
     voter_cognitive_resources: int = 20,
@@ -398,7 +357,7 @@ def create_thesis_baseline_config(
     num_crops_config: int = 3,
     num_portfolios_config: int = 5,
     crop_yield_variance_multiplier: float = 0.2,
-    num_simulation_rounds: int = 50
+    num_simulation_rounds: int = 30
 ) -> PortfolioDemocracyConfig:
     """
     Create a standardized baseline configuration for thesis experiments.
@@ -495,8 +454,8 @@ def create_thesis_baseline_config(
         portfolios=default_portfolios,
         resources=ResourceConfig(initial_amount=100.0, threshold=20.0),
         agent_settings=AgentSettingsConfig(
-            adversarial_proportion_total=adversarial_proportion_total,
-            adversarial_proportion_delegates=adversarial_proportion_total,  # Scale consistently
+            adversarial_proportion_total=adversarial_proportion_total, # Use the passed value
+            # adversarial_proportion_delegates will use its default from AgentSettingsConfig
             adversarial_introduction_type="immediate"
         ),
         cognitive_resource_settings=CognitiveResourceConfig(
@@ -517,13 +476,13 @@ def create_thesis_highvariance_config(
     adversarial_proportion_total: float,  # Required parameter for sweeps
     seed: int = 42,
     # High variance specific settings
-    num_total_agents: int = 15,
-    num_delegates_baseline: int = 6,
+    num_total_agents: int = 10,
+    num_delegates_baseline: int = 4,
     prediction_market_sigma: float = 0.25,
     delegate_cognitive_resources: int = 80,
     voter_cognitive_resources: int = 20,
     num_simulation_rounds_for_yield_generation: int = 100,
-    num_simulation_rounds: int = 50,
+    num_simulation_rounds: int = 30,
     # High variance parameters
     num_crops_config: int = 5,
     num_portfolios_config: int = 7,

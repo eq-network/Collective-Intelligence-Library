@@ -1,8 +1,10 @@
+# experiments/worker.py - SIMPLIFIED FOR TRAJECTORY FOCUS
 import os
 import time
 import traceback
 import pandas as pd
 import jax
+from dataclasses import replace # Added import
 import jax.random as jr
 import jax.numpy as jnp
 
@@ -25,7 +27,7 @@ CONFIG_FACTORIES: Dict[str, Callable[..., PortfolioDemocracyConfig]] = {
     "create_thesis_highvariance_config": create_thesis_highvariance_config,
 }
 
-def _execute_single_simulation_logic(
+def _execute_trajectory_simulation(
     key: jr.PRNGKey,
     sim_config: PortfolioDemocracyConfig,
     llm_service: Optional[ProcessIsolatedLLMService],
@@ -33,233 +35,262 @@ def _execute_single_simulation_logic(
     run_id: int
 ) -> pd.DataFrame:
     """
-    Core simulation with CLEAN progress tracking.
+    CORE SIMULATION: Simplified execution focused on resource trajectory.
     
-    DEBUG STRATEGY:
-    - Clear round-level progress information
-    - Resource trajectory tracking
-    - Decision outcome summaries
-    - Minimal technical noise
+    TRAJECTORY TRACKING:
+    - Round number
+    - Resource level after each round
+    - Basic run identification
+    
+    ELIMINATES:
+    - Execution time tracking
+    - Adversarial influence calculation
+    - Decision quality metrics
+    - Portfolio selection details
+    - Transform success monitoring
+    - Complex debugging output
+    
+    DEBUGGING STRATEGY:
+    - Minimal round-level progress (every 10th round)
+    - Resource progression summary
+    - Simple termination logging
     """
+    # Initialize simulation
     initial_state = initialize_portfolio_democracy_graph_state(key, sim_config)
     
-    llm_instance_for_pipeline = llm_service._service if llm_service and hasattr(llm_service, '_service') else llm_service
+    llm_instance = llm_service._service if llm_service and hasattr(llm_service, '_service') else llm_service
     round_transform = create_portfolio_mechanism_pipeline(
         mechanism=sim_config.mechanism,
-        llm_service=llm_instance_for_pipeline,
+        llm_service=llm_instance,
         sim_config=sim_config
     )
     
-    timeline_data_list = []
+    # Trajectory storage
+    trajectory_points = []
     current_state = initial_state
     
-    print(f"[PID {worker_pid}, RunID {run_id}] {sim_config.mechanism} simulation started")
-    print(f"  Adversarial: {sim_config.agent_settings.adversarial_proportion_total:.1%}, "
-          f"Agents: {sim_config.num_agents}, Rounds: {sim_config.num_rounds}")
+    print(f"[PID {worker_pid}] Run {run_id}: {sim_config.mechanism} simulation started")
     
-    for round_idx_loop in range(sim_config.num_rounds):
-        round_start_time = time.time()
-        resources_before = float(current_state.global_attrs.get("current_total_resources", 0.0))
-        
-        # Execute round transformation
+    # Execute simulation rounds
+    for round_idx in range(sim_config.num_rounds):
+        # Apply round transformation
         try:
             next_state = round_transform(current_state)
-            transform_success = True
+            current_state = next_state
+            simulation_success = True
         except Exception as e:
-            print(f"[PID {worker_pid}, RunID {run_id}] R{round_idx_loop} ERROR: {e}")
-            next_state = current_state
-            transform_success = False
-        
-        execution_time = time.time() - round_start_time
-        current_state = next_state
-
-        # Extract round results
-        actual_round_completed = int(current_state.global_attrs.get("round_num", round_idx_loop))
-        resources_after = float(current_state.global_attrs.get("current_total_resources", 0.0))
-        resource_change = resources_after - resources_before
-        resource_change_pct = ((resources_after / resources_before) - 1) * 100 if resources_before > 1e-6 else 0.0
-        decision_idx = int(current_state.global_attrs.get("current_decision", -1))
-        
-        # Calculate adversarial influence
-        adversarial_influence = 0.0
-        if "is_adversarial" in current_state.node_attrs and "voting_power" in current_state.node_attrs:
-            adversarial = jnp.asarray(current_state.node_attrs["is_adversarial"])
-            voting_power = jnp.asarray(current_state.node_attrs["voting_power"])
-            total_power = jnp.sum(voting_power)
-            if total_power > 1e-6:
-                adversarial_power = jnp.sum(voting_power * adversarial)
-                adversarial_influence = float(adversarial_power / total_power)
-
-        # Get portfolio name
-        chosen_portfolio_name = "N/A"
-        if 0 <= decision_idx < len(sim_config.portfolios):
-            chosen_portfolio_name = sim_config.portfolios[decision_idx].name
-
-        # Store timeline data
-        round_timeline_data = {
-            "round": actual_round_completed,
-            "execution_time": execution_time,
-            "resources_before": resources_before,
-            "resources_after": resources_after,
-            "resource_change": resource_change,
-            "resource_change_pct": resource_change_pct,
-            "decision_idx": decision_idx,
-            "chosen_portfolio": chosen_portfolio_name,
-            "adversarial_influence": adversarial_influence,
-            "transform_success": transform_success,
-            "process_id": worker_pid
-        }
-        
-        timeline_data_list.append(round_timeline_data)
-        
-        # CLEAN PROGRESS: Show meaningful round completion info
-        if (actual_round_completed + 1) % max(1, sim_config.num_rounds // 10) == 0 or actual_round_completed == sim_config.num_rounds - 1:
-            print(f"  [PID {worker_pid}] R{actual_round_completed+1:2d}/{sim_config.num_rounds} "
-                  f"Resources: {resources_after:8.1f} ({resource_change_pct:+6.1f}%) "
-                  f"Portfolio: {chosen_portfolio_name[:15]:<15} "
-                  f"AdvInf: {adversarial_influence:.2f}")
-
-        # Check termination conditions
-        if resources_after < sim_config.resources.threshold or not transform_success:
-            termination_reason = "transform_failure" if not transform_success else "resource_threshold"
-            print(f"  [PID {worker_pid}] TERMINATED: {termination_reason} at R{actual_round_completed+1}")
+            print(f"[PID {worker_pid}] Run {run_id}: Round {round_idx} failed: {e}")
+            simulation_success = False
             break
-            
-    return pd.DataFrame(timeline_data_list)
-
+        
+        # Extract trajectory data
+        actual_round = int(current_state.global_attrs.get("round_num", round_idx))
+        resources_after = float(current_state.global_attrs.get("current_total_resources", 0.0))
+        chosen_portfolio_idx = int(current_state.global_attrs.get("current_decision", -1)) # Get chosen portfolio
+        
+        # Store trajectory point
+        trajectory_points.append({
+            'round': actual_round,
+            'resources_after': resources_after,
+            'chosen_portfolio_idx': chosen_portfolio_idx # Add chosen portfolio index
+        })
+        
+        # Simple progress reporting (every 10th round)
+        if (actual_round + 1) % 10 == 0 or actual_round == sim_config.num_rounds - 1:
+            print(f"[PID {worker_pid}] Run {run_id}: Round {actual_round+1}/{sim_config.num_rounds}, "
+                  f"Resources: {resources_after:.1f}")
+        
+        # Check termination condition
+        if resources_after < sim_config.resources.threshold:
+            print(f"[PID {worker_pid}] Run {run_id}: Terminated at round {actual_round+1} "
+                  f"(resources {resources_after:.1f} < threshold {sim_config.resources.threshold})")
+            break
+    
+    # Create trajectory DataFrame
+    if trajectory_points:
+        trajectory_df = pd.DataFrame(trajectory_points)
+        print(f"[PID {worker_pid}] Run {run_id}: Completed with {len(trajectory_df)} trajectory points")
+    else:
+        # Empty trajectory for failed simulations
+        trajectory_df = pd.DataFrame(columns=['round', 'resources_after', 'chosen_portfolio_idx'])
+        print(f"[PID {worker_pid}] Run {run_id}: No trajectory data generated")
+    
+    return trajectory_df
 
 
 def run_simulation_task(run_params: Dict[str, Any]) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
-    ENHANCED SIMULATION TASK: Timeline-enabled simulation execution with streamlined metadata.
+    SIMPLIFIED SIMULATION TASK: Trajectory-focused simulation execution.
     
-    ARCHITECTURAL INTEGRATION:
-    - Maintain existing interface for backward compatibility
-    - Add timeline data to returned DataFrame  
-    - Preserve essential metadata structure
-    - Enable timeline analysis capabilities
+    ARCHITECTURAL SIMPLIFICATION:
+    - Returns only essential trajectory data (round, resources_after)
+    - Minimal metadata for run identification
+    - Simple error handling with basic logging
+    - No complex performance metrics or debugging data
     
-    ERROR HANDLING STRATEGY:
-    - Graceful degradation for configuration errors
-    - Structured error reporting in timeline format
-    - Preserve debugging information
-    - Maintain data consistency under failure conditions
+    RETURN STRUCTURE:
+    - DataFrame: trajectory data with run identification columns
+    - Dict: basic metadata for results aggregation
     
-    PERFORMANCE CONSIDERATIONS:
-    - Minimal overhead addition to existing logic
-    - Efficient DataFrame construction
-    - Optimized data types for memory usage
-    - Streamlined error path execution
+    ELIMINATES:
+    - Complex timeline metadata attachment
+    - Comprehensive error reporting structures
+    - Performance tracking and optimization
+    - Detailed debugging information
     """
     worker_pid = os.getpid()
     worker_start_time = time.time()
-    run_id = run_params['run_id']
-
-    print(f"[PID {worker_pid}, RunID {run_id}] Starting timeline simulation. Factory: {run_params['config_factory_name']}")
-
+    run_id = run_params.get('run_id', -1)
+    
+    print(f"[PID {worker_pid}] Starting Run {run_id}")
+    
     try:
-        # CONFIGURATION RESOLUTION
-        factory_name = run_params['config_factory_name']
+        # CONFIGURATION SETUP
+        factory_name = run_params.get('config_factory_name', 'create_thesis_baseline_config')
         config_factory = CONFIG_FACTORIES.get(factory_name)
-
+        
         if not config_factory:
-            raise ValueError(f"Unknown config_factory_name: {factory_name}")
+            raise ValueError(f"Unknown config factory: {factory_name}")
+        
+        # Create simulation configuration using the factory.
+        # The factory now accepts 'adversarial_proportion_total'.
+        sim_config: PortfolioDemocracyConfig = config_factory(
+            mechanism=run_params['mechanism'],
+            adversarial_proportion_total=run_params['adversarial_proportion_total'],
+            seed=run_params['unique_config_seed']
+        )        
 
-        # FACTORY ARGUMENT PREPARATION
-        factory_args = {
-            'mechanism': run_params['mechanism'],
-            'adversarial_proportion_total': run_params['adversarial_proportion_total'],
-            'seed': run_params['unique_config_seed'],
-        }
-        sim_config = config_factory(**factory_args)
         
-        # JAX RANDOM KEY GENERATION
-        key = jr.PRNGKey(run_params['unique_config_seed']) 
+        # JAX random key
+        key = jr.PRNGKey(run_params['unique_config_seed'])
         
-        # LLM SERVICE INITIALIZATION (optional)
-        llm_service: Optional[ProcessIsolatedLLMService] = None
+        # LLM SERVICE (optional)
+        llm_service = None
         if run_params.get('llm_model'):
-            openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
-            if openrouter_api_key:
+            api_key = os.getenv("OPENROUTER_API_KEY")
+            if api_key:
                 try:
                     llm_service = ProcessIsolatedLLMService(
                         model=run_params['llm_model'],
-                        api_key=openrouter_api_key,
+                        api_key=api_key,
                         process_id=f"{worker_pid}-{run_id}"
                     )
-                    print(f"[PID {worker_pid}, RunID {run_id}] LLM service initialized: {run_params['llm_model']}")
-                except Exception as e_llm:
-                    print(f"[PID {worker_pid}, RunID {run_id}] LLM init failed: {e_llm}")
-                    llm_service = None
-            else:
-                print(f"[PID {worker_pid}, RunID {run_id}] No OPENROUTER_API_KEY, running without LLM")
+                except Exception as e:
+                    print(f"[PID {worker_pid}] LLM init failed: {e}")
         
-        # CORE SIMULATION EXECUTION
-        results_df = _execute_single_simulation_logic(key, sim_config, llm_service, worker_pid, run_id)
+        # EXECUTE SIMULATION
+        trajectory_df = _execute_trajectory_simulation(key, sim_config, llm_service, worker_pid, run_id)
         
-        # TIMELINE METADATA ATTACHMENT: Add run identification to each timeline row
-        timeline_metadata_columns = {
+        # ADD RUN IDENTIFICATION to trajectory data
+        if not trajectory_df.empty:
+            trajectory_df['run_id'] = run_params['run_id']
+            trajectory_df['mechanism'] = run_params['mechanism']
+            trajectory_df['adversarial_proportion_total'] = run_params['adversarial_proportion_total']
+            trajectory_df['replication_run_index'] = run_params['replication_run_index']
+            trajectory_df['experiment_name'] = run_params.get('experiment_name', 'unknown')
+        
+        # BASIC METADATA
+        final_resources = float(trajectory_df['resources_after'].iloc[-1]) if not trajectory_df.empty else 0.0
+        simulation_duration = time.time() - worker_start_time
+        
+        metadata = {
             'run_id': run_params['run_id'],
-            'experiment_name': run_params['experiment_name'],
             'mechanism': run_params['mechanism'],
             'adversarial_proportion_total': run_params['adversarial_proportion_total'],
             'replication_run_index': run_params['replication_run_index'],
-            'unique_config_seed': run_params['unique_config_seed'],
-            'num_crops_config': len(sim_config.crops),
-            'llm_model': run_params.get('llm_model', 'none')
-        }
-        
-        # ADD METADATA TO EACH TIMELINE ROW
-        for col_name, col_val in timeline_metadata_columns.items():
-            if col_name not in results_df.columns:
-                results_df[col_name] = col_val
-
-        # AGGREGATED METADATA for results system compatibility
-        final_resources = float(results_df['resources_after'].iloc[-1]) if not results_df.empty else 0.0
-        aggregated_metadata = {
-            **run_params,
             'status': 'success',
             'worker_pid': worker_pid,
             'final_resources': final_resources,
-            'rounds_completed': len(results_df) if not results_df.empty else 0,
-            'simulation_duration_sec': time.time() - worker_start_time,
-            'llm_actually_used': llm_service is not None
+            'rounds_completed': len(trajectory_df),
+            'simulation_duration_sec': simulation_duration
         }
         
-        print(f"[PID {worker_pid}, RunID {run_id}] Success. Duration: {aggregated_metadata['simulation_duration_sec']:.2f}s, "
-              f"Timeline Points: {len(results_df)}, Final Resources: {final_resources:.2f}")
+        print(f"[PID {worker_pid}] Run {run_id}: SUCCESS in {simulation_duration:.1f}s, "
+              f"Final resources: {final_resources:.2f}")
         
-        return results_df, aggregated_metadata
-
-    except Exception as e_task:
-        # ERROR HANDLING: Structured error reporting
+        return trajectory_df, metadata
+    
+    except Exception as e:
+        # SIMPLE ERROR HANDLING
         error_duration = time.time() - worker_start_time
-        error_tb = traceback.format_exc()
-        print(f"[PID {worker_pid}, RunID {run_id}] FAILED: {e_task}\n{error_tb}")
+        error_message = str(e)
         
-        # STRUCTURED ERROR METADATA
-        error_metadata = {
-            **run_params,
-            'status': 'error',
-            'worker_pid': worker_pid,
-            'error_message': str(e_task),
-            'error_traceback': error_tb,
-            'simulation_duration_sec': error_duration,
-            'final_resources': 0.0,
-            'rounds_completed': 0,
-            'llm_actually_used': False
-        }
+        print(f"[PID {worker_pid}] Run {run_id}: FAILED after {error_duration:.1f}s: {error_message}")
         
-        # ERROR TIMELINE DATA (single row indicating failure)
-        error_timeline_data = {
+        # Create minimal error data
+        error_trajectory = pd.DataFrame([{
             'round': 0,
             'resources_after': 0.0,
-            'resource_change': 0.0,
-            'decision_idx': -1,
-            'chosen_portfolio': 'ERROR',
-            'transform_success': False,
-            'error': str(e_task),
-            **{k: run_params.get(k) for k in ['run_id', 'experiment_name', 'mechanism', 'adversarial_proportion_total']}
+            'run_id': run_params.get('run_id', -1),
+            'mechanism': run_params.get('mechanism', 'unknown'), # Ensure mechanism is included
+            'chosen_portfolio_idx': -1, # Default for error cases
+            'adversarial_proportion_total': run_params.get('adversarial_proportion_total', 0.0),
+            'replication_run_index': run_params.get('replication_run_index', 0),
+            'experiment_name': run_params.get('experiment_name', 'unknown')
+        }])
+        
+        error_metadata = {
+            'run_id': run_params.get('run_id', -1),
+            'mechanism': run_params.get('mechanism', 'unknown'),
+            'adversarial_proportion_total': run_params.get('adversarial_proportion_total', 0.0),
+            'replication_run_index': run_params.get('replication_run_index', 0),
+            'status': 'error',
+            'worker_pid': worker_pid,
+            'error_message': error_message,
+            'final_resources': 0.0,
+            'rounds_completed': 0,
+            'simulation_duration_sec': error_duration
         }
         
-        return pd.DataFrame([error_timeline_data]), error_metadata
+        return error_trajectory, error_metadata
+
+
+# CONVENIENCE FUNCTION for testing single simulations
+def test_single_simulation(
+    mechanism: str = "PLD",
+    adversarial_proportion: float = 0.3,
+    seed: int = 42,
+    config_factory: str = "create_thesis_baseline_config"
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """
+    TEST FUNCTION: Run a single simulation for debugging/validation.
+    
+    USAGE:
+    ```python
+    trajectory_df, metadata = test_single_simulation(
+        mechanism="PLD",
+        adversarial_proportion=0.3,
+        seed=42
+    )
+    print(f"Generated {len(trajectory_df)} trajectory points")
+    ```
+    """
+    test_params = {
+        'run_id': 0,
+        'mechanism': mechanism,
+        'adversarial_proportion_total': adversarial_proportion,
+        'replication_run_index': 0,
+        'unique_config_seed': seed,
+        'config_factory_name': config_factory,
+        'experiment_name': 'test_run',
+        'llm_model': None  # No LLM for testing
+    }
+    
+    return run_simulation_task(test_params)
+
+
+if __name__ == "__main__":
+    # Quick test of trajectory simulation
+    print("Testing trajectory simulation...")
+    
+    trajectory_data, metadata = test_single_simulation()
+    
+    if not trajectory_data.empty:
+        print(f"SUCCESS: Generated {len(trajectory_data)} trajectory points")
+        print(f"Final resources: {metadata['final_resources']:.2f}")
+        print(f"Trajectory preview:")
+        print(trajectory_data.head())
+    else:
+        print("FAILED: No trajectory data generated")
+        
+    print("Test complete.")

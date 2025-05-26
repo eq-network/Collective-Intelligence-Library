@@ -127,11 +127,7 @@ def _enhanced_prediction_market_signal_generator(state: GraphState, config: Dict
         
         agent_signals[agent_id] = agent_prediction_signals
     
-    # CLEAN DEBUG: Simple round-level information only
-    round_num = state.global_attrs.get("round_num", 0)
-    print(f"[R{round_num:02d}] Prediction signals generated for {num_agents} agents")
-    
-    # Return both agent-specific signals and a consensus signal
+    # Return both agent-specific signals and a consensus signal (from best-informed agent)
     best_agent_id = 0  # Delegate with highest cognitive resources
     for agent_id in range(num_agents):
         if state.node_attrs["is_delegate"][agent_id]:
@@ -140,5 +136,5 @@ def _enhanced_prediction_market_signal_generator(state: GraphState, config: Dict
     
     return {
         "agent_specific_signals": agent_signals,
-        "market_consensus": agent_signals[best_agent_id]
+        "market_consensus": agent_signals[best_agent_id]  # Use best-informed as consensus
     }

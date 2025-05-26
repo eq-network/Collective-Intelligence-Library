@@ -1,6 +1,7 @@
 # services/llm.py
 import os
 import uuid
+import time # Added for sleep
 import requests
 from typing import Dict, Any, Optional
 
@@ -18,12 +19,22 @@ class LLMService:
 class OpenRouterService(LLMService):
     """OpenRouter implementation accessing multiple LLM providers."""
     
-    def __init__(self, api_key: str = None, model: str = "deepseek/deepseek-coder"):
+    def __init__(self, 
+                 api_key: str = None, 
+                 model: str = "google/gemini-2.0-flash-001",
+                 max_retries: int = 3,
+                 initial_backoff_seconds: float = 1.0,
+                 request_delay_seconds: float = 0.1 # Small delay between requests
+                 ):
         # Get API key from param or environment
         super().__init__(api_key, model)
         self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
         if not self.api_key:
             raise ValueError("OpenRouter API key not configured")
+        
+        self.max_retries = max_retries
+        self.initial_backoff_seconds = initial_backoff_seconds
+        self.request_delay_seconds = request_delay_seconds
         
         self.base_url = "https://openrouter.ai/api/v1"
         
@@ -42,25 +53,48 @@ class OpenRouterService(LLMService):
             "temperature": temperature
         }
         
-        try:
-            response = requests.post(
-                f"{self.base_url}/chat/completions", 
-                headers=headers, 
-                json=payload
-            )
-            response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
-        except requests.exceptions.RequestException as e:
-            # Match exception pattern from original implementation for adapter compatibility
-            print(f"Error calling OpenRouter API: {e}")
-            raise ConnectionError(f"OpenRouter API call failed: {e}")
-        except Exception as e:
-            # Handle other exceptions (parsing errors, etc.)
-            print(f"Unexpected error with OpenRouter: {e}")
-            raise
+        # Introduce a small delay before making the request
+        if self.request_delay_seconds > 0:
+            time.sleep(self.request_delay_seconds)
+
+        current_retry = 0
+        while current_retry <= self.max_retries:
+            try:
+                response = requests.post(
+                    f"{self.base_url}/chat/completions", 
+                    headers=headers, 
+                    json=payload,
+                    timeout=30 # Add a timeout
+                )
+                response.raise_for_status() # Raises HTTPError for bad responses (4XX or 5XX)
+                return response.json()["choices"][0]["message"]["content"]
+            
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 429: # Too Many Requests
+                    if current_retry < self.max_retries:
+                        backoff_time = self.initial_backoff_seconds * (2 ** current_retry)
+                        # Add some jitter to backoff_time to prevent thundering herd
+                        jitter = backoff_time * 0.1 * (2 * os.urandom(1)[0] / 255 - 1) # +/- 10% jitter
+                        actual_backoff = max(0.1, backoff_time + jitter)
+                        
+                        print(f"OpenRouter API rate limit (429). Retrying in {actual_backoff:.2f}s... (Attempt {current_retry + 1}/{self.max_retries})")
+                        time.sleep(actual_backoff)
+                        current_retry += 1
+                    else:
+                        print(f"OpenRouter API rate limit (429). Max retries ({self.max_retries}) reached. Failing.")
+                        raise ConnectionError(f"OpenRouter API call failed after max retries: {e}") from e
+                else: # Other HTTP errors
+                    print(f"Error calling OpenRouter API (HTTPError): {e}")
+                    raise ConnectionError(f"OpenRouter API call failed: {e}") from e
+            except requests.exceptions.RequestException as e: # Other network errors (timeout, DNS, etc.)
+                print(f"Error calling OpenRouter API (RequestException): {e}")
+                raise ConnectionError(f"OpenRouter API call failed: {e}") from e
+            except Exception as e: # Other unexpected errors (e.g., JSON parsing)
+                print(f"Unexpected error with OpenRouter: {e}")
+                raise # Re-raise the original exception
 
 # Factory function for consistent service creation
-def create_llm_service(model: str = "google/gemini-2.5-flash-preview-05-20", api_key: Optional[str] = None) -> LLMService:
+def create_llm_service(model: str = "google/gemini-2.0-flash-001", api_key: Optional[str] = None) -> LLMService:
     """Create appropriate LLM service instance."""
     return OpenRouterService(api_key=api_key, model=model)
 
@@ -68,7 +102,7 @@ if __name__ == '__main__':
     # Example usage
     try:
         # Create service with model specification
-        service = create_llm_service(model="google/gemini-2.5-flash-preview-05-20")
+        service = create_llm_service(model="google/gemini-2.0-flash-001")
         
         # Test the service (uncomment to actually make API call)
         # response = service.generate("Write a function to calculate factorial")

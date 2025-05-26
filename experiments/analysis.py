@@ -46,6 +46,30 @@ class TimelineAnalysisPipeline:
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
         
+        # Calculate 'resources_before' and 'resource_change_pct'
+        if not self.timeline_df.empty:
+            # Ensure 'round' is sorted within each group for correct shift
+            self.timeline_df = self.timeline_df.sort_values(['run_id', 'round']).reset_index(drop=True)
+
+            # Calculate 'resources_before' by shifting 'resources_after' from the previous round
+            self.timeline_df['resources_before'] = self.timeline_df.groupby('run_id')['resources_after'].shift(1)
+
+            # Fill NaN 'resources_before' for the first round of each run.
+            # Assumes a default initial resource amount.
+            # TODO: Ideally, fetch this from config/metadata per run_id if initial resources can vary.
+            # For current thesis_baseline and thesis_highvariance configs, initial_amount is 100.0.
+            default_initial_resources = 100.0
+            self.timeline_df['resources_before'] = self.timeline_df['resources_before'].fillna(default_initial_resources)
+
+            # Calculate 'resource_change_pct'
+            delta_resources = self.timeline_df['resources_after'] - self.timeline_df['resources_before']
+            
+            self.timeline_df['resource_change_pct'] = np.where(
+                self.timeline_df['resources_before'] != 0,
+                (delta_resources / self.timeline_df['resources_before']) * 100,
+                np.where(delta_resources == 0, 0.0, np.nan) # 0% if 0->0, NaN if 0->non-zero
+            )
+
         # VALIDATION: Ensure timeline data structure integrity
         self._validate_timeline_data_structure()
         
@@ -60,7 +84,7 @@ class TimelineAnalysisPipeline:
         """
         required_timeline_cols = [
             'run_id', 'round', 'resources_after', 'mechanism', 
-            'adversarial_proportion_total', 'replication_run_index'
+            'adversarial_proportion_total', 'replication_run_index', 'chosen_portfolio_idx'
         ]
         
         missing_cols = [col for col in required_timeline_cols if col not in self.timeline_df.columns]
@@ -247,76 +271,240 @@ class TimelineAnalysisPipeline:
         - Identify temporal patterns in mechanism effectiveness
         - Enable dynamic performance comparison
         """
-        fig, axes = plt.subplots(2, 2, figsize=(20, 15))
-        axes = axes.flatten()
-        
-        # Get unique adversarial proportions for subplot organization
-        adv_props = sorted(self.timeline_df['adversarial_proportion_total'].unique())
-        
-        colors = {'PDD': 'blue', 'PRD': 'green', 'PLD': 'red'}
-        
-        for idx, adv_prop in enumerate(adv_props[:4]):  # Limit to 4 subplots
-            ax = axes[idx]
-            
-            for mechanism in ['PDD', 'PRD', 'PLD']:
-                mechanism_data = self.timeline_df[
-                    (self.timeline_df['mechanism'] == mechanism) & 
+        fig, ax = plt.subplots(figsize=(18, 10)) # Single plot
+        log_epsilon = 0.1 # Small positive value for log scale, resources typically > 20
+
+        # Define base colors for mechanisms
+        base_colors = {'PDD': 'Blues', 'PRD': 'Greens', 'PLD': 'Reds'}
+        # Define line styles for different adversarial proportions (if needed, or vary color shade)
+        line_styles = ['-', '--', ':', '-.'] 
+
+        unique_mechanisms = self.timeline_df['mechanism'].unique()
+        unique_adv_props = sorted(self.timeline_df['adversarial_proportion_total'].unique())
+
+        # Create a color map for adversarial proportions for each mechanism
+        color_maps = {}
+        for mech, cmap_name in base_colors.items():
+            cmap = plt.get_cmap(cmap_name)
+            # Create a list of colors from the colormap, ensuring enough distinct shades
+            # We take colors from the darker part of the colormap (e.g., 0.4 to 0.9 of the range)
+            color_maps[mech] = [cmap(i) for i in np.linspace(0.4, 0.9, len(unique_adv_props))]
+
+        for mechanism in unique_mechanisms:
+            for i, adv_prop in enumerate(unique_adv_props):
+                # Filter data for the specific mechanism and adversarial proportion
+                condition_data = self.timeline_df[
+                    (self.timeline_df['mechanism'] == mechanism) &
                     (self.timeline_df['adversarial_proportion_total'] == adv_prop)
                 ]
-                
-                if mechanism_data.empty:
+
+                if condition_data.empty:
                     continue
-                
+
                 # Calculate mean and confidence intervals by round
-                trajectory_stats = mechanism_data.groupby('round')['resources_after'].agg([
-                    'mean', 'std', 'count'
-                ]).reset_index()
-                
+                trajectory_stats = condition_data.groupby('round')['resources_after'].agg(
+                    ['mean', 'std', 'count']
+                ).reset_index()
+
                 # Calculate confidence intervals
-                confidence_multiplier = 1.96 if confidence_level == 0.95 else 2.576  # 99%
+                confidence_multiplier = 1.96 if confidence_level == 0.95 else 2.576 # 99%
                 trajectory_stats['ci_lower'] = trajectory_stats['mean'] - (
                     confidence_multiplier * trajectory_stats['std'] / np.sqrt(trajectory_stats['count'])
                 )
                 trajectory_stats['ci_upper'] = trajectory_stats['mean'] + (
                     confidence_multiplier * trajectory_stats['std'] / np.sqrt(trajectory_stats['count'])
                 )
-                
+
+                # Select color and line style
+                color = color_maps[mechanism][i % len(color_maps[mechanism])]
+                style = line_styles[i % len(line_styles)] # Cycle through line styles for the same mechanism
+
+                # Ensure y-values are positive for log scale
+                plot_mean = np.maximum(trajectory_stats['mean'], log_epsilon)
+                plot_ci_lower = np.maximum(trajectory_stats['ci_lower'], log_epsilon)
+                plot_ci_upper = np.maximum(trajectory_stats['ci_upper'], log_epsilon)
+
                 # Plot mean trajectory
                 ax.plot(
-                    trajectory_stats['round'], 
-                    trajectory_stats['mean'],
-                    color=colors[mechanism],
+                    trajectory_stats['round'],
+                    plot_mean,
+                    color=color,
+                    linestyle=style, # Use linestyle to differentiate adv_prop within a mechanism
                     linewidth=2,
-                    label=f"{mechanism} (n={trajectory_stats['count'].iloc[0]})"
+                    label=f"{mechanism} (Adv: {adv_prop:.0%}, n={trajectory_stats['count'].iloc[0] if not trajectory_stats.empty else 0})"
                 )
-                
+
                 # Plot confidence band
+                # Ensure ci_upper is always >= ci_lower after clipping
+                plot_ci_upper_adjusted = np.maximum(plot_ci_upper, plot_ci_lower)
                 ax.fill_between(
                     trajectory_stats['round'],
-                    trajectory_stats['ci_lower'],
-                    trajectory_stats['ci_upper'],
-                    color=colors[mechanism],
-                    alpha=0.2
+                    plot_ci_lower,
+                    plot_ci_upper_adjusted,
+                    color=color,
+                    alpha=0.15 # Reduced alpha for less clutter
                 )
-            
-            ax.set_title(f'Adversarial Proportion: {adv_prop:.1%}')
-            ax.set_xlabel('Round')
-            ax.set_ylabel('Average Resources')
-            ax.grid(True, linestyle='--', alpha=0.3)
-            ax.legend()
-        
-        # Remove unused subplots
-        for idx in range(len(adv_props), 4):
-            fig.delaxes(axes[idx])
-        
-        plt.suptitle(f'Aggregated Resource Trajectories with {confidence_level:.0%} Confidence Intervals', fontsize=16)
+        ax.set_yscale('log')
+        ax.set_title(f'Aggregated Resource Trajectories with {confidence_level:.0%} Confidence Intervals', fontsize=16)
+        ax.set_xlabel('Round', fontsize=14)
+        ax.set_ylabel('Average Resources', fontsize=14)
+        ax.grid(True, linestyle='--', alpha=0.5)
+        ax.legend(title="Mechanism (Adversarial %)", bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
+
         plt.tight_layout()
-        
+        ax.set_ylim(bottom=log_epsilon) # Set a bottom limit for the log y-axis
+        fig.subplots_adjust(right=0.75) # Adjust layout to make space for a potentially long legend
+
         aggregated_filename = os.path.join(self.output_dir, f"aggregated_trajectories_{timestamp}.png")
         plt.savefig(aggregated_filename, dpi=300, bbox_inches='tight')
         plt.close()
         print(f"Aggregated trajectories plot saved: {aggregated_filename}")
 
+    def plot_aggregated_trajectories_no_outliers(self, timestamp: str, confidence_level: float = 0.95, iqr_multiplier: float = 1.5, min_samples_for_iqr: int = 5) -> None:
+        """
+        VISUALIZATION: Aggregated trajectory analysis with statistical confidence bands,
+        removing outliers based on the Interquartile Range (IQR) method from each group at each round.
+
+        ANALYTICAL PURPOSE:
+        - Provide a more robust view of central tendency by removing extreme runs.
+        - Compare mechanism performance over time with reduced outlier influence.
+        """
+        if self.timeline_df.empty:
+            print("No timeline data to plot (no outliers version).")
+            return
+
+        fig, ax = plt.subplots(figsize=(18, 10))
+        log_epsilon = 0.1
+
+        base_colors = {'PDD': 'Blues', 'PRD': 'Greens', 'PLD': 'Reds'}
+        line_styles = ['-', '--', ':', '-.']
+
+        unique_mechanisms = self.timeline_df['mechanism'].unique()
+        unique_adv_props = sorted(self.timeline_df['adversarial_proportion_total'].unique())
+
+        color_maps = {}
+        for mech, cmap_name in base_colors.items():
+            cmap = plt.get_cmap(cmap_name)
+            color_maps[mech] = [cmap(i) for i in np.linspace(0.4, 0.9, len(unique_adv_props))]
+
+        for mechanism in unique_mechanisms:
+            for i_adv, adv_prop in enumerate(unique_adv_props):
+                condition_data_all_runs = self.timeline_df[
+                    (self.timeline_df['mechanism'] == mechanism) &
+                    (self.timeline_df['adversarial_proportion_total'] == adv_prop)
+                ]
+
+                if condition_data_all_runs.empty:
+                    continue
+
+                # Process each round to remove outliers
+                processed_rounds_data = []
+                for round_num, group in condition_data_all_runs.groupby('round'):
+                    if len(group) >= min_samples_for_iqr: # Ensure enough data points for meaningful IQR
+                        Q1 = group['resources_after'].quantile(0.25)
+                        Q3 = group['resources_after'].quantile(0.75)
+                        IQR = Q3 - Q1
+                        lower_bound = Q1 - iqr_multiplier * IQR
+                        upper_bound = Q3 + iqr_multiplier * IQR
+                        
+                        trimmed_group = group[
+                            (group['resources_after'] >= lower_bound) &
+                            (group['resources_after'] <= upper_bound)
+                        ]
+                        if not trimmed_group.empty:
+                            processed_rounds_data.append(trimmed_group)
+                    else: # Not enough data for IQR, use all data for this round
+                        processed_rounds_data.append(group)
+                
+                if not processed_rounds_data:
+                    continue
+
+                condition_data_no_outliers = pd.concat(processed_rounds_data)
+
+                if condition_data_no_outliers.empty:
+                    continue
+
+                trajectory_stats = condition_data_no_outliers.groupby('round')['resources_after'].agg(
+                    ['mean', 'std', 'count']
+                ).reset_index()
+
+                confidence_multiplier = 1.96 if confidence_level == 0.95 else 2.576
+                trajectory_stats['ci_lower'] = trajectory_stats['mean'] - (
+                    confidence_multiplier * trajectory_stats['std'] / np.sqrt(trajectory_stats['count'])
+                )
+                trajectory_stats['ci_upper'] = trajectory_stats['mean'] + (
+                    confidence_multiplier * trajectory_stats['std'] / np.sqrt(trajectory_stats['count'])
+                )
+
+                color = color_maps[mechanism][i_adv % len(color_maps[mechanism])]
+                style = line_styles[i_adv % len(line_styles)]
+
+                plot_mean = np.maximum(trajectory_stats['mean'], log_epsilon)
+                plot_ci_lower = np.maximum(trajectory_stats['ci_lower'], log_epsilon)
+                plot_ci_upper_adjusted = np.maximum(trajectory_stats['ci_upper'], plot_ci_lower)
+
+                ax.plot(trajectory_stats['round'], plot_mean, color=color, linestyle=style, linewidth=2,
+                        label=f"{mechanism} (Adv: {adv_prop:.0%}, n_iqr_filtered={trajectory_stats['count'].iloc[0] if not trajectory_stats.empty else 0})")
+                ax.fill_between(trajectory_stats['round'], plot_ci_lower, plot_ci_upper_adjusted, color=color, alpha=0.15)
+
+        ax.set_yscale('log')
+        ax.set_title(f'Aggregated Resource Trajectories (Outliers Removed) with {confidence_level:.0%} CI', fontsize=16)
+        ax.set_xlabel('Round', fontsize=14)
+        ax.set_ylabel('Average Resources (Log Scale)', fontsize=14)
+        ax.grid(True, linestyle='--', alpha=0.5)
+        ax.legend(title="Mechanism (Adv %)", bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
+        ax.set_ylim(bottom=log_epsilon)
+        plt.tight_layout()
+        fig.subplots_adjust(right=0.75)
+
+        aggregated_no_outliers_filename = os.path.join(self.output_dir, f"aggregated_trajectories_no_outliers_{timestamp}.png")
+        plt.savefig(aggregated_no_outliers_filename, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"Aggregated trajectories (no outliers) plot saved: {aggregated_no_outliers_filename}")
+    
+    def plot_mechanism_comparison_by_adversarial_level(self, timestamp: str) -> None:
+        """
+        VISUALIZATION: Compares mechanisms based on average final resources
+        across different adversarial proportion levels.
+        """
+        summary_df = self.generate_timeline_summary_stats()
+        if summary_df.empty or 'avg_final_resources' not in summary_df.columns:
+            print("Not enough data for mechanism comparison plot.")
+            return
+
+        plt.figure(figsize=(14, 8))
+        
+        # Use a consistent color palette for mechanisms
+        palette = sns.color_palette("viridis", n_colors=summary_df['mechanism'].nunique())
+        mechanism_colors = {mech: color for mech, color in zip(summary_df['mechanism'].unique(), palette)}
+
+        for mechanism in summary_df['mechanism'].unique():
+            mech_data = summary_df[summary_df['mechanism'] == mechanism].sort_values('adversarial_proportion_total')
+            if not mech_data.empty:
+                plt.plot(
+                    mech_data['adversarial_proportion_total'],
+                    mech_data['avg_final_resources'],
+                    marker='o',
+                    linestyle='-',
+                    linewidth=2,
+                    markersize=8,
+                    label=mechanism,
+                    color=mechanism_colors.get(mechanism)
+                )
+
+        plt.title('Mechanism Performance vs. Adversarial Proportion', fontsize=16)
+        plt.xlabel('Adversarial Agent Proportion', fontsize=14)
+        plt.ylabel('Average Final Resources', fontsize=14)
+        plt.yscale('log') # Often useful if resource levels vary widely
+        plt.legend(title="Mechanism", fontsize=12)
+        plt.grid(True, linestyle='--', alpha=0.7)
+        plt.tight_layout()
+
+        comparison_filename = os.path.join(self.output_dir, f"mechanism_comparison_vs_adversarial_{timestamp}.png")
+        plt.savefig(comparison_filename, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"Mechanism comparison plot saved: {comparison_filename}")
+    
     def plot_resource_change_distributions(self, timestamp: str) -> None:
         """
         DISTRIBUTION ANALYSIS: Analyze patterns in round-to-round resource changes.
@@ -372,34 +560,6 @@ class TimelineAnalysisPipeline:
         plt.close()
         print(f"Resource change distributions plot saved: {distribution_filename}")
 
-    def detect_critical_events(self, threshold_pct: float = 10.0) -> pd.DataFrame:
-        """
-        EVENT DETECTION: Identify significant resource changes for pattern analysis.
-        
-        DETECTION CRITERIA:
-        - Resource changes exceeding threshold percentage
-        - Consecutive significant changes (momentum patterns)
-        - Mechanism-specific event frequency analysis
-        - Adversarial condition correlation
-        """
-        critical_events = self.timeline_df[
-            abs(self.timeline_df['resource_change_pct']) >= threshold_pct
-        ].copy()
-        
-        if critical_events.empty:
-            return pd.DataFrame()
-        
-        # Classify event types
-        critical_events['event_type'] = critical_events['resource_change_pct'].apply(
-            lambda x: 'Large Gain' if x >= threshold_pct else 'Large Loss'
-        )
-        
-        # Add context information
-        critical_events['event_magnitude'] = abs(critical_events['resource_change_pct'])
-        
-        return critical_events[['run_id', 'round', 'mechanism', 'adversarial_proportion_total', 
-                              'event_type', 'event_magnitude', 'chosen_portfolio', 'decision_idx']]
-
     def run_comprehensive_timeline_analysis(self, timestamp: str) -> None:
         """
         COMPREHENSIVE ANALYSIS: Execute complete timeline analysis pipeline.
@@ -431,15 +591,12 @@ class TimelineAnalysisPipeline:
         
         print("4. Analyzing resource change distributions...")
         self.plot_resource_change_distributions(timestamp)
-        
-        # Critical event analysis
-        print("5. Detecting critical events...")
-        critical_events = self.detect_critical_events()
-        if not critical_events.empty:
-            events_filename = os.path.join(self.output_dir, f"critical_events_{timestamp}.csv")
-            critical_events.to_csv(events_filename, index=False)
-            print(f"Critical events analysis saved: {events_filename}")
-            print(f"   Detected {len(critical_events)} critical events across all simulations")
+
+        print("6. Generating aggregated trajectories plot (no outliers)...")
+        self.plot_aggregated_trajectories_no_outliers(timestamp)
+
+        print("7. Generating mechanism comparison plot...")
+        self.plot_mechanism_comparison_by_adversarial_level(timestamp)
         
         print("=== TIMELINE ANALYSIS COMPLETE ===\n")
 

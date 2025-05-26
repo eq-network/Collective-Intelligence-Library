@@ -3,6 +3,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import sys
 from pathlib import Path
@@ -53,25 +54,6 @@ def create_start_of_round_housekeeping_transform() -> Transform:
         return state.replace(node_attrs=new_node_attrs, global_attrs=new_global_attrs)
     return transform
 
-def _prediction_market_signal_generator(state: GraphState, config: Dict[str, Any]) -> jnp.ndarray:
-    key_val = state.global_attrs.get("round_num", 0) + state.global_attrs.get("simulation_seed", 0)
-    key = jr.PRNGKey(key_val) 
-
-    true_expected_yields = state.global_attrs["current_true_expected_crop_yields"]
-    noise_sigma = state.global_attrs["prediction_market_noise_sigma"]
-    
-    noise = jr.normal(key, shape=true_expected_yields.shape) * noise_sigma
-    noisy_predictions = true_expected_yields + noise
-    
-    # DEBUG: Add this logging
-    print(f"PREDICTION_MARKET_DEBUG: Round {state.global_attrs.get('round_num', 0)}")
-    print(f"  True expected yields: {true_expected_yields}")
-    print(f"  Noise sigma: {noise_sigma}")
-    print(f"  Generated noise: {noise}")
-    print(f"  Final prediction signals: {noisy_predictions}")
-    
-    return noisy_predictions
-
 
 def _portfolio_vote_aggregator(state: GraphState, transform_config: Dict[str, Any]) -> jnp.ndarray:
     agent_votes = state.node_attrs["agent_portfolio_votes"] 
@@ -102,6 +84,11 @@ def create_actual_yield_sampling_transform() -> Transform:
             CropConfig(**cc.__dict__) if hasattr(cc, '__dict__') else cc 
             for cc in crop_configs_generic
         ]
+
+        if not crop_configs: # Handle empty crop_configs
+            new_global_attrs = dict(state.global_attrs)
+            new_global_attrs["current_actual_crop_yields"] = jnp.array([])
+            return state.replace(global_attrs=new_global_attrs)
 
         true_expected_yields = state.global_attrs["current_true_expected_crop_yields"]
         print(f"DEBUG: True expected yields: {true_expected_yields}")
@@ -179,7 +166,7 @@ def create_llm_agent_decision_transform(
         
         # Get agent-specific prediction signals
         agent_specific_signals = state.global_attrs.get("agent_specific_prediction_signals", {})
-        uniform_signals = state.global_attrs.get("prediction_market_crop_signals", jnp.ones(len(sim_config.crops)))
+        # uniform_signals (old "prediction_market_crop_signals") is no longer the primary source if agent_specific_signals is populated.
         
         # Initialize outputs
         new_agent_portfolio_votes = state.node_attrs.get("agent_portfolio_votes", 
@@ -192,9 +179,11 @@ def create_llm_agent_decision_transform(
         # Round-level decision tracking
         round_num = state.global_attrs.get("round_num", 0)
         decision_summary = []
+        
+        # --- Prepare data for all agents first ---
+        agent_prompt_tasks = []
 
-        # Per-agent loop
-        for i in range(num_agents):
+        for i in range(num_agents): # First loop to prepare tasks
             agent_key_val = state.global_attrs.get("round_num", 0) + state.global_attrs.get("simulation_seed", 0) + i + 1000
             agent_key = jr.PRNGKey(agent_key_val)
 
@@ -216,11 +205,14 @@ def create_llm_agent_decision_transform(
             if not is_active_voter_for_round:
                 continue
 
-            # Use agent-specific prediction signals if available
+            # Use agent-specific prediction signals.
+            # These are now expected to be generated for each agent.
             if i in agent_specific_signals:
                 agent_pm_signals = agent_specific_signals[i]
             else:
-                agent_pm_signals = uniform_signals
+                # Fallback if somehow agent_specific_signals is not populated for this agent
+                print(f"[WARNING] Agent {i} missing from agent_specific_prediction_signals. Using default (potentially zeros).")
+                agent_pm_signals = jnp.zeros(len(sim_config.crops)) # Or handle error more gracefully
 
             # Generate portfolio expected yields string
             portfolio_expected_yields = []
@@ -240,87 +232,165 @@ def create_llm_agent_decision_transform(
                         delegation_targets.append(f"  Agent {k} (Designated Delegate)")
                 if delegation_targets:
                     delegate_targets_info = "Potential Delegation Targets:\n" + "\n".join(delegation_targets)
-            
+
             # Generate prompt
+            optimality_analysis_str = True
+            if sim_config.include_optimality_analysis:
+                # Ensure OptimalityCalculator is imported and available
+                optimality_calculator = OptimalityCalculator() 
+                try:
+                    current_signals = agent_pm_signals # Use agent-specific signals if available
+                    # Ensure portfolio_configs is a list of PortfolioStrategyConfig
+                    # It should be from state.global_attrs["portfolio_configs"]
+                    optimality_result = optimality_calculator.calculate_portfolio_optimality(
+                        prediction_signals=current_signals,
+                        portfolio_configs=portfolio_configs 
+                    )
+                    optimality_analysis_str = generate_optimality_prompt_text(optimality_result)
+                except Exception as e_opt:
+                    print(f"[OPTIMALITY_ERROR] Agent {i}, Round {round_num}: {e_opt}")
+                    optimality_analysis_str = "Optimality analysis currently unavailable."
+
+            # Generate performance history string for delegation decisions
+            performance_history_str = True
+            if sim_config.use_redteam_prompts and mechanism == "PLD":
+                history_lines = ["DELEGATE PERFORMANCE HISTORY (recent performance score 0.0-1.0, 1.0 is best):"]
+                
+                # These attributes are now calculated and updated by create_agent_performance_update_transform
+                cumulative_scores = state.node_attrs.get("cumulative_performance_score", jnp.full(num_agents, 0.0)) 
+                decisions_made_count = state.node_attrs.get("num_decisions_made_history", jnp.zeros(num_agents, dtype=jnp.int32))
+
+                delegates_found_for_history = False
+                for k in range(num_agents):
+                    # Agent k is a delegate, is not the current agent i, and is a potential target
+                    if state.node_attrs["is_delegate"][k] and k != i: 
+                        delegates_found_for_history = True
+                        score = float(cumulative_scores[k])
+                        count = int(decisions_made_count[k])
+                        history_lines.append(
+                            f"  Agent {k}: Performance Score: {score:.2f}/1.0 (based on {count} decisions)"
+                        )
+                if delegates_found_for_history:
+                    performance_history_str = "\n".join(history_lines)
+                else:
+                    performance_history_str = "No delegate performance history available for other agents."
+
+            # Directly use the unified generate_prompt method
             prompt_result = sim_config.prompt_settings.generate_prompt(
-                agent_id=i,
-                round_num=state.global_attrs.get('round_num', 0),
-                is_delegate=is_delegate_role,
-                is_adversarial=is_adversarial,
-                cognitive_resources=cognitive_resources,
-                mechanism=mechanism,
-                portfolio_options_str=portfolio_options_str,
-                delegate_targets_str=delegate_targets_info
+                    agent_id=i,
+                    round_num=round_num,
+                    is_delegate=is_delegate_role,
+                    is_adversarial=is_adversarial,
+                    cognitive_resources=cognitive_resources, # This is the 0-100 score
+                    mechanism=mechanism,
+                    portfolio_options_str=portfolio_options_str,
+                    delegate_targets_str=delegate_targets_info,
+                    performance_history_str=performance_history_str,
+                    optimality_analysis=optimality_analysis_str,
+                    include_decision_framework=True # Or control this via sim_config if needed
             )
-            
+
             prompt = prompt_result["prompt"]
             max_tokens = prompt_result["max_tokens"]
+
+            agent_prompt_tasks.append({
+                "agent_id": i,
+                "prompt": prompt,
+                "max_tokens": max_tokens,
+                "is_adversarial": is_adversarial,
+                "is_delegate_role": is_delegate_role,
+                "is_active_voter_for_round": is_active_voter_for_round,
+                "mechanism": mechanism # Store mechanism for parsing logic
+            })
+
+        # --- Execute LLM calls in parallel (if llm_service exists) ---
+        llm_responses = {} # Store {agent_id: llm_response_text}
+
+        if llm_service:
+            # Limit concurrent LLM calls to avoid overwhelming APIs or local resources
+            # This number might need tuning based on API limits and num_agents
+            max_llm_workers = min(num_agents, 8) # Example: up to 8 concurrent LLM calls
+            with ThreadPoolExecutor(max_workers=max_llm_workers) as executor:
+                future_to_agent_id = {
+                    executor.submit(llm_service.generate, task["prompt"], task["max_tokens"]): task["agent_id"]
+                    for task in agent_prompt_tasks if task["is_active_voter_for_round"]
+                }
+                for future in as_completed(future_to_agent_id):
+                    agent_id = future_to_agent_id[future]
+                    try:
+                        llm_responses[agent_id] = future.result()
+                    except Exception as e:
+                        print(f"[R{round_num:02d}] LLM error for Agent {agent_id} (parallel): {e}")
+                        llm_responses[agent_id] = "" # Empty response on error
+
+        # --- Process responses and apply decisions ---
+        for task_data in agent_prompt_tasks:
+            i = task_data["agent_id"]
+            if not task_data["is_active_voter_for_round"]:
+                continue
+
+            llm_response_text = llm_responses.get(i, "") # Get from parallel execution or empty if no LLM/error
             
-            # LLM decision-making logic with ENHANCED debugging
-            llm_response_text = ""
             chosen_portfolio_indices_to_approve = []
             delegation_choice = -1
             action_cost = 0
             agent_action_this_round = False
+            is_adversarial = task_data["is_adversarial"]
+            is_delegate_role = task_data["is_delegate_role"]
+            current_mechanism = task_data["mechanism"] # Use stored mechanism
 
-            if llm_service:
-                try:
-                    llm_response_text = llm_service.generate(prompt, max_tokens=max_tokens)
+            # ENHANCED DEBUG: Show meaningful LLM response snippets
+            # response_snippet = llm_response_text[:100] + "..." if len(llm_response_text) > 100 else llm_response_text
+            agent_role_str = "Delegate" if is_delegate_role else "Voter"
+            agent_type_str = "Adversarial" if is_adversarial else "Aligned"
+            
+            if llm_response_text: # Only parse if there's a response
 
-                    # ENHANCED DEBUG: Show meaningful LLM response snippets
-                    response_snippet = llm_response_text[:100] + "..." if len(llm_response_text) > 100 else llm_response_text
-                    agent_role = "Delegate" if is_delegate_role else "Voter"
-                    agent_type = "Adversarial" if is_adversarial else "Aligned"
-                    
-                    if mechanism == "PLD":
-                        action_match = re.search(r"Action:\s*(\w+)", llm_response_text, re.IGNORECASE)
-                        if action_match and action_match.group(1).upper() == "DELEGATE":
-                            target_match = re.search(r"AgentID:\s*(\d+)", llm_response_text, re.IGNORECASE)
-                            if target_match:
-                                potential_target_id = int(target_match.group(1))
-                                if (0 <= potential_target_id < num_agents and 
-                                   potential_target_id != i and 
-                                   state.node_attrs["is_delegate"][potential_target_id]):
-                                    delegation_choice = potential_target_id
-                                    agent_action_this_round = True
-                                    decision_summary.append(f"A{i}({agent_type[0]}{agent_role[0]}) → DELEGATE to A{potential_target_id}")
+                if current_mechanism == "PLD":
+                    action_match = re.search(r"Action:\s*(\w+)", llm_response_text, re.IGNORECASE)
+                    if action_match and action_match.group(1).upper() == "DELEGATE":
+                        target_match = re.search(r"AgentID:\s*(\d+)", llm_response_text, re.IGNORECASE)
+                        if target_match:
+                            potential_target_id = int(target_match.group(1))
+                            if (0 <= potential_target_id < num_agents and 
+                               potential_target_id != i and 
+                               state.node_attrs["is_delegate"][potential_target_id]):
+                                delegation_choice = potential_target_id
+                                agent_action_this_round = True
+                                decision_summary.append(f"A{i}({agent_type_str[0]}{agent_role_str[0]}) → DELEGATE to A{potential_target_id}")
 
-                    if not (mechanism == "PLD" and agent_action_this_round):
-                        votes_match = re.search(r"Votes:\s*\[([^\]]*)\]", llm_response_text, re.IGNORECASE)
-                        if votes_match:
-                            try:
-                                vote_str_list = votes_match.group(1).split(',')
-                                parsed_votes = [int(v.strip()) for v in vote_str_list if v.strip().isdigit()]
-                                if len(parsed_votes) == num_portfolios:
-                                    chosen_portfolio_indices_to_approve = [idx for idx, val in enumerate(parsed_votes) if val == 1]
-                                    if chosen_portfolio_indices_to_approve:
-                                        portfolio_names = [portfolio_configs[idx].name for idx in chosen_portfolio_indices_to_approve]
-                                        decision_summary.append(f"A{i}({agent_type[0]}{agent_role[0]}) → VOTE {portfolio_names}")
-                            except ValueError:
-                                pass
-                        agent_action_this_round = True
-
-                except Exception as e:
-                    print(f"[R{round_num:02d}] LLM error for Agent {i}: {e}")
-                    agent_action_this_round = False
+                if not (current_mechanism == "PLD" and agent_action_this_round): # If not PLD delegation or PLD vote
+                    votes_match = re.search(r"Votes:\s*\[([^\]]*)\]", llm_response_text, re.IGNORECASE)
+                    if votes_match:
+                        try:
+                            vote_str_list = votes_match.group(1).split(',')
+                            parsed_votes = [int(v.strip()) for v in vote_str_list if v.strip().isdigit()]
+                            if len(parsed_votes) == num_portfolios: # Ensure correct number of votes
+                                chosen_portfolio_indices_to_approve = [idx for idx, val in enumerate(parsed_votes) if val == 1]
+                                if chosen_portfolio_indices_to_approve:
+                                    portfolio_names = [portfolio_configs[idx].name for idx in chosen_portfolio_indices_to_approve]
+                                    decision_summary.append(f"A{i}({agent_type_str[0]}{agent_role_str[0]}) → VOTE {portfolio_names}")
+                        except ValueError:
+                            pass # Failed to parse votes
+                    agent_action_this_round = True # Assume an action (even if it's an empty vote)
             
             # Fallback logic
             if not llm_service and not agent_action_this_round:
                 agent_action_this_round = True
-                if mechanism == "PLD":
+                if current_mechanism == "PLD":
                     delegation_choice = -1
 
             # Apply decisions
             if agent_action_this_round:
                 new_tokens_spent = new_tokens_spent.at[i].add(action_cost)
 
-                if delegation_choice != -1 and mechanism == "PLD":
+                if delegation_choice != -1 and current_mechanism == "PLD":
                     new_delegation_target = new_delegation_target.at[i].set(delegation_choice)
                     new_agent_portfolio_votes = new_agent_portfolio_votes.at[i].set(jnp.zeros(num_portfolios, dtype=jnp.int32))
                 else:
                     current_agent_votes = jnp.zeros(num_portfolios, dtype=jnp.int32)
                     if chosen_portfolio_indices_to_approve:
-                        current_agent_votes = current_agent_votes.at[jnp.array(chosen_portfolio_indices_to_approve)].set(1)
+                        current_agent_votes = current_agent_votes.at[jnp.array(chosen_portfolio_indices_to_approve, dtype=jnp.int32)].set(1)
                     new_agent_portfolio_votes = new_agent_portfolio_votes.at[i].set(current_agent_votes)
                     if mechanism == "PLD":
                         new_delegation_target = new_delegation_target.at[i].set(-1)
@@ -341,6 +411,83 @@ def create_llm_agent_decision_transform(
     
     return transform
 
+def create_agent_performance_update_transform() -> Transform:
+    """
+    Calculates and updates each agent's historical performance score based on
+    their portfolio choices in the current round, relative to the optimal
+    choice given their own prediction signals.
+    """
+    def transform(state: GraphState) -> GraphState:
+        num_agents = state.num_nodes
+        portfolio_configs = state.global_attrs["portfolio_configs"]
+        
+        agent_specific_signals = state.global_attrs.get("agent_specific_prediction_signals", {})
+        uniform_signals = state.global_attrs.get("prediction_market_crop_signals") # Fallback
+        
+        agent_portfolio_votes = state.node_attrs["agent_portfolio_votes"] # Shape: (num_agents, num_portfolios)
+        
+        # Get current historical performance data
+        cumulative_scores = state.node_attrs["cumulative_performance_score"].copy()
+        num_decisions = state.node_attrs["num_decisions_made_history"].copy()
+
+        for i in range(num_agents):
+            # Check if agent i made a portfolio choice (i.e., has any '1' in their vote vector)
+            # This also implicitly checks if they were an active voter for the round.
+            # In PLD, if an agent delegates, their agent_portfolio_votes for that round will be all zeros.
+            if jnp.sum(agent_portfolio_votes[i]) == 0:
+                continue # Agent did not vote for a portfolio (e.g., delegated or inactive)
+
+            # Get the agent's prediction signals for this round
+            if i in agent_specific_signals:
+                current_agent_signals = agent_specific_signals[i]
+            elif uniform_signals is not None:
+                current_agent_signals = uniform_signals
+            else:
+                # Should not happen if prediction market ran, but as a safeguard:
+                print(f"Warning: No prediction signals found for agent {i} to calculate performance.")
+                continue
+
+            # Calculate expected returns for all portfolios based on THIS agent's signals
+            expected_returns_for_agent = []
+            for p_cfg in portfolio_configs:
+                p_weights = jnp.array(p_cfg.weights)
+                expected_return = jnp.sum(p_weights * current_agent_signals)
+                expected_returns_for_agent.append(float(expected_return))
+            
+            if not expected_returns_for_agent:
+                continue
+
+            min_r = min(expected_returns_for_agent)
+            max_r = max(expected_returns_for_agent)
+
+            # Determine the expected return of the agent's chosen portfolio(s)
+            chosen_indices = jnp.where(agent_portfolio_votes[i] == 1)[0]
+            if len(chosen_indices) == 0: # Should be caught by the sum check above, but for safety
+                continue
+
+            chosen_portfolio_returns = [expected_returns_for_agent[idx] for idx in chosen_indices]
+            avg_chosen_return = sum(chosen_portfolio_returns) / len(chosen_portfolio_returns)
+
+            # Calculate current round's performance score (0-1)
+            current_round_score = 0.5 # Default for edge cases like max_r == min_r
+            if max_r > min_r:
+                current_round_score = (avg_chosen_return - min_r) / (max_r - min_r)
+            elif max_r == min_r : # All options were perceived as equal by the agent
+                 current_round_score = 1.0 # Agent made the best possible choice given their info
+
+            current_round_score = jnp.clip(current_round_score, 0.0, 1.0) # Ensure score is 0-1
+
+            # Update running average for historical performance
+            old_total_score = cumulative_scores[i] * num_decisions[i]
+            new_num_decisions = num_decisions[i] + 1
+            cumulative_scores = cumulative_scores.at[i].set((old_total_score + current_round_score) / new_num_decisions)
+            num_decisions = num_decisions.at[i].set(new_num_decisions)
+
+        new_node_attrs = dict(state.node_attrs)
+        new_node_attrs["cumulative_performance_score"] = cumulative_scores
+        new_node_attrs["num_decisions_made_history"] = num_decisions
+        return state.replace(node_attrs=new_node_attrs)
+    return transform
 
 # --- Main Factory Function (largely unchanged from your version, ensure create_llm_agent_decision_transform is called) ---
 
@@ -355,9 +502,50 @@ def create_portfolio_mechanism_pipeline(
     # Initialize election_transform_prd to None so it's always bound
     election_transform_prd = None 
 
+    # --- New Agent-Specific Prediction Market Signal Generator ---
+    def _agent_specific_prediction_market_signal_generator(state: GraphState, generator_config: Dict[str, Any]) -> Dict[int, jnp.ndarray]:
+        """
+        Generates prediction market signals for each agent, scaled by their cognitive resources.
+        """
+        # generator_config is passed by create_prediction_market_transform but not used here.
+        agent_perceived_signals = {}
+        true_expected_yields = state.global_attrs["current_true_expected_crop_yields"]
+        base_noise_sigma = sim_config.market_settings.prediction_noise_sigma # Global base noise
+        
+        num_agents = state.num_nodes
+        # Ensure "cognitive_resources" attribute exists and is correctly populated during initialization
+        agent_cognitive_resources = state.node_attrs.get("cognitive_resources", jnp.full(num_agents, 50.0)) # Default to 50 if missing
+
+        base_key_val = state.global_attrs.get("round_num", 0) + state.global_attrs.get("simulation_seed", 0)
+        
+        print(f"PREDICTION_MARKET_DEBUG (Agent-Specific): Round {state.global_attrs.get('round_num', 0)}")
+        print(f"  Base Noise Sigma: {base_noise_sigma}")
+        print(f"  True Expected Crop Yields: {true_expected_yields}")
+
+        for agent_id in range(num_agents):
+            key_agent_noise = jr.PRNGKey(base_key_val + agent_id + 500) # Unique key per agent per round
+            
+            cog_res = jnp.clip(agent_cognitive_resources[agent_id], 0, 100) # Ensure CR is within 0-100
+            
+            # Noise multiplier: 1.0 for CR=0 (full base_noise_sigma), 0.0 for CR=100 (no noise)
+            # CR=20 -> (100-20)/100 = 0.8 multiplier
+            # CR=80 -> (100-80)/100 = 0.2 multiplier
+            noise_multiplier = (100.0 - cog_res) / 100.0
+            
+            agent_specific_sigma = base_noise_sigma * noise_multiplier
+            
+            noise = jr.normal(key_agent_noise, shape=true_expected_yields.shape) * agent_specific_sigma
+            agent_perceived_signals[agent_id] = true_expected_yields + noise
+
+            if agent_id == 0 and state.global_attrs.get('round_num', 0) < 1: # Log for one agent in early rounds
+                print(f"  Agent {agent_id} (CR: {cog_res:.0f}): Noise Multiplier: {noise_multiplier:.2f}, Agent Sigma: {agent_specific_sigma:.4f}, Signals: {agent_perceived_signals[agent_id]}")
+
+        return agent_perceived_signals
+    # --- End New Generator ---
+
     prediction_market_transform = create_prediction_market_transform(
-    prediction_generator=_prediction_market_signal_generator,
-    config={"output_attr_name": "prediction_market_crop_signals"} 
+        prediction_generator=_agent_specific_prediction_market_signal_generator, # Use the new generator
+        config={"output_attr_name": "agent_specific_prediction_signals"} # Store output here
     )
     
     # THIS IS THE KEY CHANGE: Pass llm_service and sim_config
@@ -392,12 +580,15 @@ def create_portfolio_mechanism_pipeline(
             } 
     )
     
+    performance_update_transform = create_agent_performance_update_transform()
+
     pipeline_steps = []
     if election_transform_prd: # If PRD, election logic runs first (or after housekeeping)
         pipeline_steps.append(housekeeping_transform)
         pipeline_steps.append(election_transform_prd)
     else:
         pipeline_steps.append(housekeeping_transform)
+
 
     pipeline_steps.extend([
         prediction_market_transform, 
@@ -407,7 +598,8 @@ def create_portfolio_mechanism_pipeline(
     pipeline_steps.extend([
         voting_transform,            
         actual_yield_transform,      
-        apply_decision_to_resources_transform 
+        apply_decision_to_resources_transform,
+        performance_update_transform # Add performance update at the end of the round
     ])
     
     return sequential(*pipeline_steps)
@@ -430,16 +622,13 @@ def run_enhanced_mechanism_comparison():
         print(f"\n🧪 Testing {mechanism} with enhanced prompting...")
         
         # Create enhanced configuration
-        config = create_enhanced_thesis_baseline_config(
+        config = create_thesis_baseline_config(
             mechanism=mechanism,
             adversarial_proportion_total=0.3,
             seed=12345,
-            use_redteam_prompts=True,
-            include_optimality_analysis=True
         )
         
         print(f"  Configuration: {config.num_agents} agents, {config.num_delegates} delegates")
-        print(f"  Red team prompts: {config.use_redteam_prompts}")
         print(f"  Optimality analysis: {config.include_optimality_analysis}")
         
         # Initialize simulation state

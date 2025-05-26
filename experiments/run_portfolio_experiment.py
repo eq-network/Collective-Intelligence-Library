@@ -28,18 +28,31 @@ def define_all_experiments() -> List[ExperimentDefinition]:
     experiments = []
 
     # Define the High Variance Experiment Setup for timeline analysis
-    high_variance_exp = ExperimentDefinition(
-        name="HighVariance_5Crop_Timeline",
-        config_factory_func_name="create_thesis_highvariance_config",
+    #high_variance_exp = ExperimentDefinition(
+    #    name="HighVariance_5Crop_Timeline",
+    #    config_factory_func_name="create_thesis_highvariance_config",
+    #    mechanisms_to_test=["PLD"],  #["PDD", "PRD", "PLD"],
+    #    adversarial_proportions_to_sweep= [0.1, 0.3, 0.5, 0.7], #[0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
+    #    num_replications_per_setting=2,
+    #    base_seed_for_experiment=20240802,
+    #    llm_model='google/gemini-2.5-flash-preview-05-20'
+    #)
+    #experiments.append(high_variance_exp)
+#
+     # Define the High Variance Experiment Setup for timeline analysis
+    base_variance_exp = ExperimentDefinition(
+        name="BaseVariance_5Crop_Timeline",
+        config_factory_func_name="create_thesis_baseline_config",
         mechanisms_to_test=["PDD", "PRD", "PLD"],
-        adversarial_proportions_to_sweep=[0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
-        num_replications_per_setting=2,
+        adversarial_proportions_to_sweep= [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1],
+        num_replications_per_setting=25,
         base_seed_for_experiment=20240802,
-        llm_model='google/gemini-2.5-flash-preview-05-20'
+        llm_model='google/gemini-2.0-flash-001'
     )
-    experiments.append(high_variance_exp)
+    experiments.append(base_variance_exp)
     
     return experiments
+    
 
 
 def main():
