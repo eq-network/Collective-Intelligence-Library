@@ -25,15 +25,15 @@ if str(root_dir) not in sys.path:
 from core.graph import GraphState
 from core.category import Transform
 
-from environments.democracy.configuration import (
+from environments.noise_democracy.configuration import (
     PortfolioDemocracyConfig,
     create_thesis_baseline_config
 )
-from environments.democracy.initialization import (
+from environments.noise_democracy.initialization import (
     initialize_portfolio_democracy_graph_state,
     get_true_expected_yields_for_round
 )
-from environments.democracy.mechanism_factory import create_portfolio_mechanism_pipeline
+from environments.noise_democracy.mechanism_factory import create_portfolio_mechanism_pipeline
 
 from services.llm import LLMService, create_llm_service
 

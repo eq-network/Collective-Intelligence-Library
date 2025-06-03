@@ -35,13 +35,13 @@ if str(root_dir) not in sys.path:
     sys.path.insert(0, str(root_dir))
 
 from core.graph import GraphState
-from environments.democracy.configuration import (
+from environments.noise_democracy.configuration import (
     create_thesis_baseline_config, 
     PortfolioDemocracyConfig,
     CropConfig,
     PortfolioStrategyConfig
 )
-from environments.democracy.initialization import initialize_portfolio_democracy_graph_state
+from environments.noise_democracy.initialization import initialize_portfolio_democracy_graph_state
 from services.llm import create_llm_service, LLMService
 
 class CandidateProfile(NamedTuple):

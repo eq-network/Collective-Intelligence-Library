@@ -27,7 +27,7 @@ if str(root_dir) not in sys.path:
     sys.path.insert(0, str(root_dir))
 
 from core.graph import GraphState
-from environments.democracy.configuration import PortfolioStrategyConfig, CropConfig
+from environments.noise_democracy.configuration import PortfolioStrategyConfig, CropConfig
 
 class OptimalityResult(NamedTuple):
     """

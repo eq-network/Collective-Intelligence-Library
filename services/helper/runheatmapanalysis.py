@@ -50,7 +50,8 @@ def main_analysis(csv_file_path: str, output_directory: str):
 
     # Ensure the output directory for this specific analysis exists
     # You might want to create a subdirectory for each CSV analysis
-    analysis_output_dir = os.path.join(output_directory, f"heatmap_analysis_{Path(csv_file_path).stem}_{timestamp}")
+    # analysis_output_dir = os.path.join(output_directory, f"heatmap_analysis_{Path(csv_file_path).stem}_{timestamp}")
+    analysis_output_dir = os.path.join(output_directory, f"run_{timestamp}")
     os.makedirs(analysis_output_dir, exist_ok=True)
     print(f"Output will be saved to: {analysis_output_dir}")
 
@@ -84,10 +85,10 @@ def main_analysis(csv_file_path: str, output_directory: str):
 if __name__ == "__main__":
     # --- USER CONFIGURATION ---
     # Replace with the actual path to your CSV file
-    csv_to_analyze = r"experiment_outputs\TimelinePortfolioDemocracySuite_20250526_122811- Gemini Flash 2.0\aggregated_final_timeline_data_20250526_122811.csv\aggregated_final_timeline_data_20250526_122811.csv"
+    csv_to_analyze = r"experiment_outputs\TimelinePortfolioDemocracySuite_20250530_150206\aggregated_final_timeline_data_20250530_150206.csv\aggregated_final_timeline_data_20250530_150206.csv"
     
     # Replace with your desired base output directory for these plots
-    base_output_dir = r"experiment_outputs\TimelinePortfolioDemocracySuite_20250526_122811- Gemini Flash 2.0"
+    base_output_dir = r"experiment_outputs\TimelinePortfolioDemocracySuite_20250530_150206\heatmap_analysis"
     # --- END USER CONFIGURATION ---
 
     if not os.path.exists(csv_to_analyze):

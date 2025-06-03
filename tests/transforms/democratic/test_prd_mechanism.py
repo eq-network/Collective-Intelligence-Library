@@ -4,8 +4,8 @@ import jax.numpy as jnp
 import jax.random as jr
 from dataclasses import replace as dataclass_replace # Import the replace function
 
-from environments.democracy.configuration import create_thesis_baseline_config
-from environments.democracy.initialization import initialize_portfolio_democracy_graph_state
+from environments.noise_democracy.configuration import create_thesis_baseline_config
+from environments.noise_democracy.initialization import initialize_portfolio_democracy_graph_state
 from transformations.top_down.democratic_transforms.election import create_election_transform
 
 class TestPRDMechanism(unittest.TestCase):

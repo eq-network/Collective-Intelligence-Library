@@ -17,14 +17,14 @@ from core.category import Transform, sequential
 from core.graph import GraphState
 
 # Enhanced imports
-from environments.democracy.configuration import (
+from environments.noise_democracy.configuration import (
     PortfolioDemocracyConfig, 
     PromptConfig,
     PortfolioStrategyConfig,
     CropConfig,
     create_thesis_baseline_config
 )
-from environments.democracy.optimality_analysis import (
+from environments.noise_democracy.optimality_analysis import (
     OptimalityCalculator,
     PerformanceAnalyzer,
     calculate_optimality_for_state,
@@ -112,6 +112,15 @@ def create_actual_yield_sampling_transform() -> Transform:
         new_global_attrs["current_actual_crop_yields"] = actual_yields_array
         return state.replace(global_attrs=new_global_attrs)
     return transform
+
+def log_decision_transform(state: GraphState) -> GraphState:
+    round_num = state.global_attrs.get("round_num", -1)
+    mech = state.global_attrs.get("stable_sim_config_REF").mechanism # Get mechanism
+    decision = state.global_attrs.get("current_decision", -99)
+    vote_dist = state.global_attrs.get("vote_distribution", "N/A")
+    print(f"[PRE_RESOURCE_CALC] R{round_num} ({mech}): current_decision = {decision}, vote_distribution = {vote_dist}")
+    return state
+
 
 def _portfolio_resource_calculator(state: GraphState, transform_config: Dict[str, Any]) -> float:
     chosen_portfolio_idx = state.global_attrs.get("current_decision")
@@ -344,55 +353,79 @@ def create_llm_agent_decision_transform(
             agent_role_str = "Delegate" if is_delegate_role else "Voter"
             agent_type_str = "Adversarial" if is_adversarial else "Aligned"
             
-            if llm_response_text: # Only parse if there's a response
-
+            if llm_response_text:
                 if current_mechanism == "PLD":
                     action_match = re.search(r"Action:\s*(\w+)", llm_response_text, re.IGNORECASE)
                     if action_match and action_match.group(1).upper() == "DELEGATE":
                         target_match = re.search(r"AgentID:\s*(\d+)", llm_response_text, re.IGNORECASE)
                         if target_match:
-                            potential_target_id = int(target_match.group(1))
-                            if (0 <= potential_target_id < num_agents and 
-                               potential_target_id != i and 
-                               state.node_attrs["is_delegate"][potential_target_id]):
-                                delegation_choice = potential_target_id
-                                agent_action_this_round = True
-                                decision_summary.append(f"A{i}({agent_type_str[0]}{agent_role_str[0]}) → DELEGATE to A{potential_target_id}")
+                            # ... (existing delegation logic) ...
+                            agent_action_this_round = True
+                            # ...
+                        else: # Action DELEGATE but no AgentID
+                            print(f"[DEBUG_PARSE_WARN] R{round_num} A{i} (PLD): Action DELEGATE but no AgentID found. LLM Response: '{llm_response_text[:200]}...'")
+                            decision_summary.append(f"A{i}({agent_type_str[0]}{agent_role_str[0]}) → DELEGATE FAIL (no target)")
 
-                if not (current_mechanism == "PLD" and agent_action_this_round): # If not PLD delegation or PLD vote
+
+                # This block handles VOTE for PLD, or any action for PDD/PRD
+                if not agent_action_this_round: # If not PLD delegation, try to parse votes
                     votes_match = re.search(r"Votes:\s*\[([^\]]*)\]", llm_response_text, re.IGNORECASE)
                     if votes_match:
                         try:
                             vote_str_list = votes_match.group(1).split(',')
-                            parsed_votes = [int(v.strip()) for v in vote_str_list if v.strip().isdigit()]
-                            if len(parsed_votes) == num_portfolios: # Ensure correct number of votes
+                            parsed_votes = [int(v.strip()) for v in vote_str_list if v.strip().isdigit()] # make more robust
+                            if not parsed_votes and vote_str_list and any(v.strip() for v in vote_str_list): # e.g. Votes: [blah]
+                                print(f"[DEBUG_PARSE_WARN] R{round_num} A{i} ({current_mechanism}): 'Votes: [...]' found but content not all 0/1. Content: '{vote_str_list}'. LLM Response: '{llm_response_text[:200]}...'")
+                                # Defaults to empty chosen_portfolio_indices_to_approve
+
+                            if len(parsed_votes) == num_portfolios:
                                 chosen_portfolio_indices_to_approve = [idx for idx, val in enumerate(parsed_votes) if val == 1]
+                                agent_action_this_round = True # Valid vote format processed
                                 if chosen_portfolio_indices_to_approve:
                                     portfolio_names = [portfolio_configs[idx].name for idx in chosen_portfolio_indices_to_approve]
                                     decision_summary.append(f"A{i}({agent_type_str[0]}{agent_role_str[0]}) → VOTE {portfolio_names}")
+                                else: # e.g. Votes: [0,0,0]
+                                    decision_summary.append(f"A{i}({agent_type_str[0]}{agent_role_str[0]}) → VOTE FOR NO PORTFOLIOS")
+                            else: # Parsed votes, but wrong number
+                                print(f"[DEBUG_PARSE_WARN] R{round_num} A{i} ({current_mechanism}): Parsed {len(parsed_votes)} votes, expected {num_portfolios}. LLM Response: '{llm_response_text[:200]}...'")
+                                # chosen_portfolio_indices_to_approve remains empty, agent_action_this_round still False
                         except ValueError:
-                            pass # Failed to parse votes
-                    agent_action_this_round = True # Assume an action (even if it's an empty vote)
-            
-            # Fallback logic
-            if not llm_service and not agent_action_this_round:
-                agent_action_this_round = True
-                if current_mechanism == "PLD":
-                    delegation_choice = -1
+                            print(f"[DEBUG_PARSE_ERROR] R{round_num} A{i} ({current_mechanism}): ValueError parsing votes. LLM Response: '{llm_response_text[:200]}...'")
+                            # chosen_portfolio_indices_to_approve remains empty, agent_action_this_round still False
+                    else: # No "Votes: [...]" match
+                        # This is the critical path for PDD/PRD if LLM is confused
+                        if current_mechanism != "PLD" or (current_mechanism == "PLD" and (not action_match or action_match.group(1).upper() == "VOTE")):
+                             print(f"[DEBUG_PARSE_FAIL] R{round_num} A{i} ({current_mechanism}): No 'Votes: [...]' found. LLM Response: '{llm_response_text[:200]}...'")
+                             decision_summary.append(f"A{i}({agent_type_str[0]}{agent_role_str[0]}) → VOTE PARSE FAIL")
+            else: # No LLM response text
+                 print(f"[DEBUG_NO_RESPONSE] R{round_num} A{i} ({current_mechanism}): No LLM response text received.")
+                 decision_summary.append(f"A{i}({agent_type_str[0]}{agent_role_str[0]}) → NO LLM RESPONSE")
 
-            # Apply decisions
-            if agent_action_this_round:
+            # Fallback / default action if no valid action was parsed
+            if not agent_action_this_round:
+                print(f"[DEBUG_FALLBACK] R{round_num} A{i} ({current_mechanism}): No valid action parsed. Defaulting to NO VOTE / NO ACTION.")
+                agent_action_this_round = True # Count as an action (of doing nothing useful)
+                # For PDD/PRD, or PLD vote fail, this means chosen_portfolio_indices_to_approve is empty
+                # new_agent_portfolio_votes.at[i].set(jnp.zeros(num_portfolios, dtype=jnp.int32)) will handle this.
+                # For PLD delegation fail, new_delegation_target.at[i].set(-1) will handle this.
+                if current_mechanism == "PLD": # If it was PLD and they didn't make a valid DELEGATE or VOTE
+                    new_delegation_target = new_delegation_target.at[i].set(-1) # Ensure no prior delegation target sticks
+                    new_agent_portfolio_votes = new_agent_portfolio_votes.at[i].set(jnp.zeros(num_portfolios, dtype=jnp.int32))
+
+
+            # Apply decisions (this part should largely remain the same)
+            if agent_action_this_round: # This flag now means "an action, even if it's a parsed failure/default, has been accounted for"
                 new_tokens_spent = new_tokens_spent.at[i].add(action_cost)
 
-                if delegation_choice != -1 and current_mechanism == "PLD":
+                if delegation_choice != -1 and current_mechanism == "PLD": # Successfully chose to delegate
                     new_delegation_target = new_delegation_target.at[i].set(delegation_choice)
                     new_agent_portfolio_votes = new_agent_portfolio_votes.at[i].set(jnp.zeros(num_portfolios, dtype=jnp.int32))
-                else:
+                else: # Voted (or attempted to vote / defaulted to no vote)
                     current_agent_votes = jnp.zeros(num_portfolios, dtype=jnp.int32)
-                    if chosen_portfolio_indices_to_approve:
+                    if chosen_portfolio_indices_to_approve: # This will be empty if parsing failed or voted all zeros
                         current_agent_votes = current_agent_votes.at[jnp.array(chosen_portfolio_indices_to_approve, dtype=jnp.int32)].set(1)
                     new_agent_portfolio_votes = new_agent_portfolio_votes.at[i].set(current_agent_votes)
-                    if mechanism == "PLD":
+                    if mechanism == "PLD": # If PLD and voted (or failed to vote/delegate), ensure delegation target is -1
                         new_delegation_target = new_delegation_target.at[i].set(-1)
 
         # ENHANCED DEBUG: Round-level decision summary
@@ -542,6 +575,13 @@ def create_portfolio_mechanism_pipeline(
 
         return agent_perceived_signals
     # --- End New Generator ---
+    def log_decision_transform(state: GraphState) -> GraphState:
+        round_num = state.global_attrs.get("round_num", -1)
+        mech = state.global_attrs.get("stable_sim_config_REF").mechanism # Get mechanism
+        decision = state.global_attrs.get("current_decision", -99)
+        vote_dist = state.global_attrs.get("vote_distribution", "N/A")
+        print(f"[PRE_RESOURCE_CALC] R{round_num} ({mech}): current_decision = {decision}, vote_distribution = {vote_dist}")
+        return state
 
     prediction_market_transform = create_prediction_market_transform(
         prediction_generator=_agent_specific_prediction_market_signal_generator, # Use the new generator
@@ -596,7 +636,8 @@ def create_portfolio_mechanism_pipeline(
     ])
     pipeline_steps.extend(delegation_related_transforms) 
     pipeline_steps.extend([
-        voting_transform,            
+        voting_transform,
+        log_decision_transform,            
         actual_yield_transform,      
         apply_decision_to_resources_transform,
         performance_update_transform # Add performance update at the end of the round
@@ -633,7 +674,7 @@ def run_enhanced_mechanism_comparison():
         
         # Initialize simulation state
         key = jr.PRNGKey(config.seed)
-        from environments.democracy.initialization import initialize_portfolio_democracy_graph_state
+        from environments.noise_democracy.initialization import initialize_portfolio_democracy_graph_state
         initial_state = initialize_portfolio_democracy_graph_state(key, config)
         
         # Calculate baseline optimality

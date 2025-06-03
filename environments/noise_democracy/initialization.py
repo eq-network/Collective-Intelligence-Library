@@ -13,7 +13,7 @@ if str(root_dir) not in sys.path:
     sys.path.insert(0, str(root_dir))
 
 # Assuming the configuration file is now named 'configuration.py' in the same directory
-from environments.democracy.configuration import PortfolioDemocracyConfig, AgentSettingsConfig, CropConfig,CognitiveResourceConfig, create_thesis_baseline_config
+from environments.noise_democracy.configuration import PortfolioDemocracyConfig, AgentSettingsConfig, CropConfig,CognitiveResourceConfig, create_thesis_baseline_config
 
 from core.graph import GraphState # Assuming this path is correct based on project structure
 

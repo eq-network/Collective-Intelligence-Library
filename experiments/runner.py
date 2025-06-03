@@ -164,19 +164,6 @@ class EnhancedParallelExperimentRunner:
     def run_experiment_grid(self, run_params_list: List[Dict[str, Any]]) -> EnhancedResultsAggregator:
         """
         ENHANCED EXECUTION: Timeline-optimized parallel experiment execution.
-        
-        EXECUTION STRATEGY:
-        1. Initialize timeline-optimized results aggregator
-        2. Monitor memory usage throughout execution
-        3. Implement adaptive save intervals based on memory pressure
-        4. Provide enhanced progress tracking with timeline insights
-        5. Handle large data volumes gracefully
-        
-        MEMORY MANAGEMENT APPROACH:
-        - Continuous memory monitoring
-        - Adaptive processing parameters
-        - Proactive optimization under pressure
-        - Comprehensive performance reporting
         """
         total_tasks = len(run_params_list)
         
@@ -210,8 +197,8 @@ class EnhancedParallelExperimentRunner:
                 run_params = future_to_run_params[future]
                 
                 try:
-                    # Get results and validate structure
-                    df_result, metadata_result = future.result()
+                    # Get results and validate structure (NOW WITH ANOMALIES)
+                    df_result, metadata_result, anomaly_log_result = future.result()
                     
                     # Timeline-specific validation
                     timeline_points = len(df_result) if not df_result.empty else 0
@@ -226,6 +213,9 @@ class EnhancedParallelExperimentRunner:
                     # Add to results with memory monitoring
                     memory_info = self._get_system_memory_info()
                     results_aggregator.add_result(df_result, metadata_result)
+                    
+                    # NEW: Add anomalies after the existing results_aggregator.add_result call
+                    results_aggregator.add_anomalies(anomaly_log_result, metadata_result)
                     
                     # Enhanced progress tracking with timeline insights
                     is_success = metadata_result.get('status') == 'success'
@@ -259,7 +249,7 @@ class EnhancedParallelExperimentRunner:
                         
                         print(f"\n[INTERMEDIATE_SAVE] Saving results ({completed_count}/{total_tasks} completed)")
                         print(f"[TIMELINE_STATS] Processed {self.total_timeline_points_processed} timeline points "
-                              f"(avg: {self.average_timeline_points_per_sim:.1f} per simulation)")
+                            f"(avg: {self.average_timeline_points_per_sim:.1f} per simulation)")
                         
                         results_aggregator.save_results(
                             os.path.join(self.output_dir, "aggregated_intermediate"), 
@@ -269,7 +259,7 @@ class EnhancedParallelExperimentRunner:
                         
                         save_duration = time.time() - save_start_time
                         print(f"[SAVE_COMPLETE] Duration: {save_duration:.2f}s, "
-                              f"Memory: {self._get_system_memory_info()['process_memory_gb']:.2f}GB")
+                            f"Memory: {self._get_system_memory_info()['process_memory_gb']:.2f}GB")
                         
                         processed_tasks_since_last_save = 0
                         
@@ -301,7 +291,15 @@ class EnhancedParallelExperimentRunner:
                         'error': str(exc)
                     }])
                     
+                    # Create error anomaly entry
+                    error_anomaly_entry = [{
+                        "anomaly_type": "RUNNER_ERROR", 
+                        "run_id": run_params.get('run_id', -1), 
+                        "error_message": str(exc)
+                    }]
+                    
                     results_aggregator.add_result(error_timeline, error_metadata)
+                    results_aggregator.add_anomalies(error_anomaly_entry, run_params)  # Pass run_params as metadata
                     progress_tracker.record_completion(task_duration=0, process_id=0, success=False)
         
         # Final execution summary with timeline-specific metrics

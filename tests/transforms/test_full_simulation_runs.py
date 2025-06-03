@@ -15,7 +15,7 @@ if str(project_root) not in sys.path:
 
 # ARCHITECTURAL ENHANCEMENT: Import new cognitive resource configuration classes
 from core.graph import GraphState
-from environments.democracy.configuration import (
+from environments.noise_democracy.configuration import (
     create_thesis_baseline_config, 
     PortfolioDemocracyConfig, 
     CropConfig, 
@@ -23,7 +23,7 @@ from environments.democracy.configuration import (
     CognitiveResourceConfig  # NEW: Import cognitive resource configuration
 )
 from services.llm import LLMService, create_llm_service
-from environments.democracy.mechanism_factory import create_llm_agent_decision_transform
+from environments.noise_democracy.mechanism_factory import create_llm_agent_decision_transform
 
 # ARCHITECTURAL PRESERVATION: Maintain existing import pattern for simulation function
 run_single_simulation_imported_function = None

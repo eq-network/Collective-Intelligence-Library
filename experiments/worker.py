@@ -7,66 +7,80 @@ import jax
 from dataclasses import replace # Added import
 import jax.random as jr
 import jax.numpy as jnp
-
-from typing import Dict, Any, Tuple, Optional, Callable
+from typing import Dict, Any, Tuple, Optional, Callable, List
 
 # Import your config object and factory functions
-from environments.democracy.configuration import (
-    PortfolioDemocracyConfig,
-    create_thesis_baseline_config,
-    create_thesis_highvariance_config
+from environments.noise_democracy.configuration import (
+    PortfolioDemocracyConfig, # This might need to be a more general type or union if configs differ a lot
+    create_thesis_baseline_config as create_noise_thesis_baseline_config, # Keep old one
+    create_thesis_highvariance_config as create_noise_thesis_highvariance_config
 )
-from environments.democracy.initialization import initialize_portfolio_democracy_graph_state
-from environments.democracy.mechanism_factory import create_portfolio_mechanism_pipeline
+from environments.stable_democracy.configuration import (
+    create_stable_democracy_config,
+    StablePortfolioDemocracyConfig # Import the new config type
+)
+from environments.stable_democracy.initialization import (
+    initialize_stable_democracy_graph_state as initialize_stable_graph_state # Alias
+)
+# Import the pipeline factory for stable_democracy
+from environments.stable_democracy.mechanism_factory import (
+    create_stable_participation_mechanism_pipeline
+)
+from environments.noise_democracy.initialization import (
+    initialize_portfolio_democracy_graph_state as initialize_noise_graph_state # Alias
+)
+from environments.noise_democracy.mechanism_factory import create_portfolio_mechanism_pipeline
 from services.llm import ProcessIsolatedLLMService
 from core.graph import GraphState
 
 # --- Mapping from factory name string to actual function ---
-CONFIG_FACTORIES: Dict[str, Callable[..., PortfolioDemocracyConfig]] = {
-    "create_thesis_baseline_config": create_thesis_baseline_config,
-    "create_thesis_highvariance_config": create_thesis_highvariance_config,
+CONFIG_FACTORIES: Dict[str, Callable[..., Any]] = { # Use Any if return types differ
+    "create_noise_thesis_baseline_config": create_noise_thesis_baseline_config,
+    "create_noise_thesis_highvariance_config": create_noise_thesis_highvariance_config,
+    "create_stable_democracy_config": create_stable_democracy_config, # Add the new one
 }
+
 
 def _execute_trajectory_simulation(
     key: jr.PRNGKey,
-    sim_config: PortfolioDemocracyConfig,
+    sim_config: Any,
     llm_service: Optional[ProcessIsolatedLLMService],
     worker_pid: int,
-    run_id: int
-) -> pd.DataFrame:
+    run_id: int,
+    config_factory_name: str
+) -> Tuple[pd.DataFrame, List[Dict[str, Any]]]:  # Added anomalies return type
     """
     CORE SIMULATION: Simplified execution focused on resource trajectory.
-    
-    TRAJECTORY TRACKING:
-    - Round number
-    - Resource level after each round
-    - Basic run identification
-    
-    ELIMINATES:
-    - Execution time tracking
-    - Adversarial influence calculation
-    - Decision quality metrics
-    - Portfolio selection details
-    - Transform success monitoring
-    - Complex debugging output
-    
-    DEBUGGING STRATEGY:
-    - Minimal round-level progress (every 10th round)
-    - Resource progression summary
-    - Simple termination logging
+    Now also collects anomaly logs from each round.
     """
     # Initialize simulation
-    initial_state = initialize_portfolio_democracy_graph_state(key, sim_config)
-    
+    if config_factory_name == "create_stable_democracy_config":
+        if not isinstance(sim_config, StablePortfolioDemocracyConfig):
+            raise TypeError(f"Expected StablePortfolioDemocracyConfig for factory {config_factory_name}, got {type(sim_config)}")
+        initial_state = initialize_stable_graph_state(key, sim_config)
+    else:
+        initial_state = initialize_noise_graph_state(key, sim_config)
+
     llm_instance = llm_service._service if llm_service and hasattr(llm_service, '_service') else llm_service
-    round_transform = create_portfolio_mechanism_pipeline(
-        mechanism=sim_config.mechanism,
-        llm_service=llm_instance,
-        sim_config=sim_config
-    )
+
+    # Dynamically select the correct mechanism pipeline
+    if config_factory_name == "create_stable_democracy_config":
+        if not isinstance(sim_config, StablePortfolioDemocracyConfig):
+            raise TypeError(f"Expected StablePortfolioDemocracyConfig for factory {config_factory_name}, got {type(sim_config)}")
+        round_transform = create_stable_participation_mechanism_pipeline(
+            stable_sim_config=sim_config,
+            llm_service=llm_instance
+        )
+    else:
+        round_transform = create_portfolio_mechanism_pipeline(
+            mechanism=sim_config.mechanism,
+            llm_service=llm_instance,
+            sim_config=sim_config
+        )
     
-    # Trajectory storage
+    # Trajectory and anomaly storage
     trajectory_points = []
+    all_simulation_anomalies = []  # Initialize list to store anomalies
     current_state = initial_state
     
     print(f"[PID {worker_pid}] Run {run_id}: {sim_config.mechanism} simulation started")
@@ -78,6 +92,12 @@ def _execute_trajectory_simulation(
             next_state = round_transform(current_state)
             current_state = next_state
             simulation_success = True
+            
+            # NEW: Extract anomalies from the state after the transform
+            round_anomalies_from_state = next_state.global_attrs.get("round_anomaly_log", [])
+            if round_anomalies_from_state:
+                all_simulation_anomalies.extend(round_anomalies_from_state)
+                
         except Exception as e:
             print(f"[PID {worker_pid}] Run {run_id}: Round {round_idx} failed: {e}")
             simulation_success = False
@@ -86,13 +106,13 @@ def _execute_trajectory_simulation(
         # Extract trajectory data
         actual_round = int(current_state.global_attrs.get("round_num", round_idx))
         resources_after = float(current_state.global_attrs.get("current_total_resources", 0.0))
-        chosen_portfolio_idx = int(current_state.global_attrs.get("current_decision", -1)) # Get chosen portfolio
+        chosen_portfolio_idx = int(current_state.global_attrs.get("current_decision", -1))
         
         # Store trajectory point
         trajectory_points.append({
             'round': actual_round,
             'resources_after': resources_after,
-            'chosen_portfolio_idx': chosen_portfolio_idx # Add chosen portfolio index
+            'chosen_portfolio_idx': chosen_portfolio_idx
         })
         
         # Simple progress reporting (every 10th round)
@@ -109,39 +129,22 @@ def _execute_trajectory_simulation(
     # Create trajectory DataFrame
     if trajectory_points:
         trajectory_df = pd.DataFrame(trajectory_points)
-        print(f"[PID {worker_pid}] Run {run_id}: Completed with {len(trajectory_df)} trajectory points")
+        print(f"[PID {worker_pid}] Run {run_id}: Completed with {len(trajectory_df)} trajectory points, {len(all_simulation_anomalies)} anomalies")
     else:
-        # Empty trajectory for failed simulations
         trajectory_df = pd.DataFrame(columns=['round', 'resources_after', 'chosen_portfolio_idx'])
         print(f"[PID {worker_pid}] Run {run_id}: No trajectory data generated")
     
-    return trajectory_df
+    return trajectory_df, all_simulation_anomalies
 
 
-def run_simulation_task(run_params: Dict[str, Any]) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+def run_simulation_task(run_params: Dict[str, Any]) -> Tuple[pd.DataFrame, Dict[str, Any], List[Dict[str, Any]]]:  # Added anomalies return
     """
-    SIMPLIFIED SIMULATION TASK: Trajectory-focused simulation execution.
-    
-    ARCHITECTURAL SIMPLIFICATION:
-    - Returns only essential trajectory data (round, resources_after)
-    - Minimal metadata for run identification
-    - Simple error handling with basic logging
-    - No complex performance metrics or debugging data
-    
-    RETURN STRUCTURE:
-    - DataFrame: trajectory data with run identification columns
-    - Dict: basic metadata for results aggregation
-    
-    ELIMINATES:
-    - Complex timeline metadata attachment
-    - Comprehensive error reporting structures
-    - Performance tracking and optimization
-    - Detailed debugging information
+    SIMPLIFIED SIMULATION TASK: Trajectory-focused simulation execution with anomaly collection.
     """
     worker_pid = os.getpid()
     worker_start_time = time.time()
     run_id = run_params.get('run_id', -1)
-    
+    config_factory_name = run_params.get('config_factory_name', 'create_noise_thesis_baseline_config')
     print(f"[PID {worker_pid}] Starting Run {run_id}")
     
     try:
@@ -152,15 +155,12 @@ def run_simulation_task(run_params: Dict[str, Any]) -> Tuple[pd.DataFrame, Dict[
         if not config_factory:
             raise ValueError(f"Unknown config factory: {factory_name}")
         
-        # Create simulation configuration using the factory.
-        # The factory now accepts 'adversarial_proportion_total'.
-        sim_config: PortfolioDemocracyConfig = config_factory(
+        sim_config: Any = config_factory(
             mechanism=run_params['mechanism'],
             adversarial_proportion_total=run_params['adversarial_proportion_total'],
             seed=run_params['unique_config_seed']
         )        
 
-        
         # JAX random key
         key = jr.PRNGKey(run_params['unique_config_seed'])
         
@@ -179,7 +179,9 @@ def run_simulation_task(run_params: Dict[str, Any]) -> Tuple[pd.DataFrame, Dict[
                     print(f"[PID {worker_pid}] LLM init failed: {e}")
         
         # EXECUTE SIMULATION
-        trajectory_df = _execute_trajectory_simulation(key, sim_config, llm_service, worker_pid, run_id)
+        trajectory_df, anomalies_for_run = _execute_trajectory_simulation(
+            key, sim_config, llm_service, worker_pid, run_id, config_factory_name
+        )
         
         # ADD RUN IDENTIFICATION to trajectory data
         if not trajectory_df.empty:
@@ -206,9 +208,51 @@ def run_simulation_task(run_params: Dict[str, Any]) -> Tuple[pd.DataFrame, Dict[
         }
         
         print(f"[PID {worker_pid}] Run {run_id}: SUCCESS in {simulation_duration:.1f}s, "
-              f"Final resources: {final_resources:.2f}")
+              f"Final resources: {final_resources:.2f}, Anomalies: {len(anomalies_for_run)}")
         
-        return trajectory_df, metadata
+        return trajectory_df, metadata, anomalies_for_run
+    
+    except Exception as e:
+        # SIMPLE ERROR HANDLING
+        error_duration = time.time() - worker_start_time
+        error_message = str(e)
+        
+        print(f"[PID {worker_pid}] Run {run_id}: FAILED after {error_duration:.1f}s: {error_message}")
+        
+        # Create minimal error data
+        error_trajectory = pd.DataFrame([{
+            'round': 0,
+            'resources_after': 0.0,
+            'run_id': run_params.get('run_id', -1),
+            'mechanism': run_params.get('mechanism', 'unknown'),
+            'chosen_portfolio_idx': -1,
+            'adversarial_proportion_total': run_params.get('adversarial_proportion_total', 0.0),
+            'replication_run_index': run_params.get('replication_run_index', 0),
+            'experiment_name': run_params.get('experiment_name', 'unknown')
+        }])
+        
+        error_metadata = {
+            'run_id': run_params.get('run_id', -1),
+            'mechanism': run_params.get('mechanism', 'unknown'),
+            'adversarial_proportion_total': run_params.get('adversarial_proportion_total', 0.0),
+            'replication_run_index': run_params.get('replication_run_index', 0),
+            'status': 'error',
+            'worker_pid': worker_pid,
+            'error_message': error_message,
+            'final_resources': 0.0,
+            'rounds_completed': 0,
+            'simulation_duration_sec': error_duration
+        }
+        
+        error_anomalies = [{
+            "anomaly_type": "WORKER_EXECUTION_ERROR", 
+            "run_id": run_params.get('run_id', -1), 
+            "round_num": -1,
+            "agent_id": -1,
+            "error_message": str(e)
+        }]
+        
+        return error_trajectory, error_metadata, error_anomalies
     
     except Exception as e:
         # SIMPLE ERROR HANDLING

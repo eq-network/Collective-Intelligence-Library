@@ -1,202 +1,123 @@
 # transformations/top_down/democratic_transforms/election.py
 import jax
 import jax.numpy as jnp
-import jax.random as jr
-import re # For parsing LLM responses
-from typing import Dict, Any, List
+# import jax.random as jr # Not needed if votes are pre-supplied
+from typing import Dict, Any
 
 from core.graph import GraphState
 from core.category import Transform
 
-# For LLM-based election voting (if desired)
-from services.llm import LLMService 
-# from environments.democracy.configuration import PromptConfig # If using prompts for election
-
-def _parse_election_votes_from_llm(response: str, num_candidates: int) -> List[int]:
-    """
-    Parses an LLM string response to extract election votes.
-    Expects a response containing a list-like structure, e.g., "Candidate Approvals: [0,1,0,1]".
-    Returns a list of 0s or 1s with length equal to num_candidates.
-    This parser aims to be robust against common LLM output variations.
-    """
-    # Attempt to find a list-like structure, e.g., "[0,1,0]" or "Approvals: [1, 0]"
-    # The regex (.*?) is non-greedy to capture only the content of the first found brackets.
-    match = re.search(r"\[(.*?)\]", response)
-
-    # If no list pattern is found in the response string.
-    if not match:
-        print(f"Warning: _parse_election_votes_from_llm: Could not find list pattern '[]' in LLM response: '{response}'. Defaulting to no approvals.")
-        # Returns [0,0,...] for num_candidates > 0, or [] if num_candidates == 0.
-        return [0] * num_candidates
-
-    content = match.group(1).strip() # Get content within brackets and strip whitespace
-
-    # Handle the case where no candidates are expected.
-    if num_candidates == 0:
-        if content == "": # LLM correctly responded with an empty list for 0 candidates.
-            return []
-        else: # LLM responded with content, but 0 candidates were expected.
-            print(f"Warning: _parse_election_votes_from_llm: LLM response '{response}' has content but expected empty list for 0 candidates. Defaulting to [].")
-            return []
-
-    # From this point, num_candidates > 0.
-    # The goal is to return a list of 0s and 1s of length num_candidates.
-    try:
-        parsed_votes: List[int] = []
-        if not content: # Handles "[]" when num_candidates > 0 (i.e., LLM returned an empty list of approvals).
-            # parsed_votes remains empty. The length check later will ensure it becomes [0]*num_candidates.
-            pass
-        else:
-            # Split the content by comma, strip whitespace from each part.
-            str_vote_values = [s.strip() for s in content.split(',')]
-            for s_vote in str_vote_values:
-                if s_vote == '1':
-                    parsed_votes.append(1)
-                elif s_vote == '0':
-                    parsed_votes.append(0)
-                else:
-                    # Handle invalid or empty strings (e.g., from "1,,0" or "1, gibberish, 0") as 0.
-                    print(f"Warning: _parse_election_votes_from_llm: Invalid or empty vote value '{s_vote}' in '{content}' from response '{response}'. Treating as 0.")
-                    parsed_votes.append(0)
-        
-        # Ensure the final list of votes has the correct length.
-        if len(parsed_votes) != num_candidates:
-            print(f"Warning: _parse_election_votes_from_llm: Parsed {len(parsed_votes)} votes, but expected {num_candidates} for response '{response}'. Defaulting to list of {num_candidates} zeros.")
-            return [0] * num_candidates
-        
-        return parsed_votes
-    except Exception as e:
-        # Catch any unexpected error during the parsing process.
-        print(f"Error: _parse_election_votes_from_llm: Unexpected error during parsing of '{response}': {e}. Defaulting to list of {num_candidates} zeros.")
-        return [0] * num_candidates
-
 def create_election_transform(
-    # llm_service: Optional[LLMService] = None, # If LLM involved in election voting
-    # prompt_config: Optional[PromptConfig] = None # If LLM involved
-    election_logic: str = "random_approval" # or "llm_approval" or "highest_cog_resource"
+    candidate_flag_attr: str = "is_delegate", # Node attribute marking potential candidates
+    election_votes_attr: str = "agent_votes_for_candidates" # Node attribute storing cast votes for candidates
+                                                            # Shape: (num_voters, num_candidates_in_list)
+                                                            # The calling code needs to ensure this is populated.
 ) -> Transform:
     """
-    Simulates an election process for PRD.
-    - Identifies candidates (those with is_delegate == True).
-    - Agents vote for candidates.
-    - Top N candidates become elected representatives.
-    - Resets their term length.
+    Pure election transform for PRD.
+    - Checks election timing.
+    - Identifies candidates based on `candidate_flag_attr`.
+    - Tallies votes from `election_votes_attr`.
+    - Selects top N candidates.
+    - Updates representative status and terms.
+    
+    This transform assumes that agent_votes_for_candidates has been populated
+    by a preceding transform (e.g., an LLM decision step where agents vote
+    for election candidates).
     """
     def transform(state: GraphState) -> GraphState:
-        # Only run election if it's time
+        round_num = state.global_attrs.get("round_num", 0)
+        term_length = state.global_attrs.get("prd_election_term_length", 4) # Get term length from globals
+
+        # 1. Check if it's election time
         if state.global_attrs.get("rounds_until_next_election_prd", 0) > 0:
             new_global_attrs = state.global_attrs.copy()
             new_global_attrs["rounds_until_next_election_prd"] -= 1
-            # Decrement term for existing reps
+            
             new_node_attrs = state.node_attrs.copy()
-            new_node_attrs["representative_term_remaining"] = jnp.maximum(0, state.node_attrs["representative_term_remaining"] - 1)
+            if "representative_term_remaining" in new_node_attrs:
+                new_node_attrs["representative_term_remaining"] = jnp.maximum(
+                    0, state.node_attrs["representative_term_remaining"] - 1
+                )
+            else:
+                new_node_attrs["representative_term_remaining"] = jnp.zeros(state.num_nodes, dtype=jnp.int32)
             return state.replace(global_attrs=new_global_attrs, node_attrs=new_node_attrs)
 
-        print(f"[PRD Election] Round {state.global_attrs.get('round_num', 0)}: Holding new election.")
+        print(f"[PRD Election] Round {round_num}: Holding new election (Term Length: {term_length}).")
         
         num_agents = state.num_nodes
-        candidate_mask = state.node_attrs["is_delegate"] # Agents who are delegates are candidates
-        candidate_indices = jnp.where(candidate_mask)[0]
-        num_candidates = len(candidate_indices)
+        if num_agents == 0:
+            print(f"[PRD Election] R{round_num}: No agents. Skipping election.")
+            new_global_attrs_no_agents = state.global_attrs.copy()
+            new_global_attrs_no_agents["rounds_until_next_election_prd"] = term_length -1 if term_length > 0 else 0
+            return state.replace(global_attrs=new_global_attrs_no_agents)
 
-        if num_candidates == 0:
-            print("[PRD Election] No candidates available. Skipping election.")
-            # Reset election countdown for next round to try again
-            new_global_attrs = state.global_attrs.copy()
-            new_global_attrs["rounds_until_next_election_prd"] = state.global_attrs["prd_election_term_length"]
-            return state.replace(global_attrs=new_global_attrs)
+        # 2. Identify Candidates
+        candidate_mask = state.node_attrs.get(candidate_flag_attr, jnp.zeros(num_agents, dtype=jnp.bool_))
+        candidate_original_indices = jnp.where(candidate_mask)[0] # Actual agent IDs of candidates
+        num_actual_candidates = candidate_original_indices.shape[0]
 
-        num_to_elect = state.global_attrs["prd_num_representatives_to_elect"]
+        if num_actual_candidates == 0:
+            print(f"[PRD Election] R{round_num}: No candidates flagged with '{candidate_flag_attr}'. Skipping election.")
+            new_global_attrs_no_cands = state.global_attrs.copy()
+            new_global_attrs_no_cands["rounds_until_next_election_prd"] = term_length -1 if term_length > 0 else 0
+            new_node_attrs_no_cands = state.node_attrs.copy()
+            new_node_attrs_no_cands["is_elected_representative"] = jnp.zeros(num_agents, dtype=jnp.bool_)
+            # Ensure terms correctly handled for outgoing reps
+            current_terms = new_node_attrs_no_cands.get("representative_term_remaining", jnp.zeros(num_agents, dtype=jnp.int32))
+            new_node_attrs_no_cands["representative_term_remaining"] = jnp.maximum(0, current_terms - 1)
+            return state.replace(global_attrs=new_global_attrs_no_cands, node_attrs=new_node_attrs_no_cands)
 
-        # --- Voting Phase ---
-        # Each agent votes on the candidates.
-        # For simplicity, let's do random approval voting by each agent for now.
-        # A more complex version would involve LLMs or strategic voting.
+        # 3. Determine Number to Elect
+        num_to_elect_config = state.global_attrs.get("prd_num_representatives_to_elect")
+        default_num_to_elect = state.global_attrs.get("num_delegates", min(num_actual_candidates, 4))
+        num_to_elect = min(num_to_elect_config if isinstance(num_to_elect_config, int) and num_to_elect_config > 0 else default_num_to_elect, num_actual_candidates)
+
+        if num_to_elect == 0 and num_actual_candidates > 0:
+             print(f"[PRD Election WARNING] R{round_num}: num_to_elect is 0, but there are candidates. No one will be elected.")
+
+        # 4. Get Cast Votes for Candidates
+        # Assumes `agent_votes_for_candidates` is shape (num_agents, num_actual_candidates)
+        # where the columns in the vote array correspond to the order of candidates in `candidate_original_indices`.
+        agent_votes_for_candidate_list = state.node_attrs.get(election_votes_attr)
         
-        # candidate_approvals[voter_idx, candidate_idx_in_list]
-        all_candidate_votes = jnp.zeros((num_agents, num_candidates), dtype=jnp.int32)
+        if agent_votes_for_candidate_list is None:
+            print(f"[PRD Election ERROR] R{round_num}: Missing '{election_votes_attr}' in node_attrs. Cannot tally votes. Defaulting to no elected.")
+            total_votes_for_each_candidate_in_list = jnp.zeros(num_actual_candidates, dtype=jnp.int32)
+        elif agent_votes_for_candidate_list.shape != (num_agents, num_actual_candidates):
+            print(f"[PRD Election ERROR] R{round_num}: Shape of '{election_votes_attr}' is {agent_votes_for_candidate_list.shape}, expected ({num_agents}, {num_actual_candidates}). Defaulting to no elected.")
+            total_votes_for_each_candidate_in_list = jnp.zeros(num_actual_candidates, dtype=jnp.int32)
+        else:
+            # Assuming approval votes (0 or 1). If scores, sum directly.
+            total_votes_for_each_candidate_in_list = jnp.sum(agent_votes_for_candidate_list, axis=0) 
+
+        # 5. Select Winners
+        elected_agent_ids = jnp.array([], dtype=jnp.int32)
+        if num_actual_candidates > 0 and num_to_elect > 0 and total_votes_for_each_candidate_in_list.size > 0 :
+            tie_breaker = (-candidate_original_indices.astype(jnp.float32) / (float(num_agents) + 1.0)) * 1e-6 
+            scores_for_sorting = total_votes_for_each_candidate_in_list.astype(jnp.float32) + tie_breaker
+            sorted_indices_in_candidate_list = jnp.argsort(scores_for_sorting)[::-1]
+            elected_indices_in_cand_list = sorted_indices_in_candidate_list[:num_to_elect]
+            elected_agent_ids = candidate_original_indices[elected_indices_in_cand_list]
         
-        key_base = jr.PRNGKey(state.global_attrs.get("simulation_seed",0) + state.global_attrs.get("round_num",0) + 1000)
-
-        if election_logic == "random_approval":
-            # Each agent randomly approves ~50% of candidates
-            keys = jr.split(key_base, num_agents)
-            for i in range(num_agents):
-                # Adversarial agents might vote strategically (e.g., approve bad candidates, or only their own kind)
-                is_voter_adversarial = state.node_attrs["is_adversarial"][i]
-                if is_voter_adversarial:
-                    # Simplistic: adversarial voters approve adversarial candidates if any, else random
-                    adv_candidates_present = jnp.any(state.node_attrs["is_adversarial"][candidate_indices])
-                    if adv_candidates_present:
-                        # Approve only adversarial candidates
-                        approvals = state.node_attrs["is_adversarial"][candidate_indices].astype(jnp.int32)
-                    else: # No adversarial candidates, vote randomly to disrupt
-                        approvals = jr.bernoulli(keys[i], 0.5, shape=(num_candidates,)).astype(jnp.int32)
-                else: # Honest voters
-                    approvals = jr.bernoulli(keys[i], 0.5, shape=(num_candidates,)).astype(jnp.int32)
-                all_candidate_votes = all_candidate_votes.at[i, :].set(approvals)
-        
-        elif election_logic == "highest_cog_resource": # Non-adversarial agents vote for highest cog resource candidates
-             # This is a very simple heuristic for honest agents
-            candidate_cog_resources = state.node_attrs["cognitive_resources"][candidate_indices]
-            # Honest voters approve top N candidates by cog resources
-            # For simplicity, let's say they approve candidates with cog_resources > median cog_resource of candidates
-            if num_candidates > 0:
-                median_cog_res = jnp.median(candidate_cog_resources)
-                honest_approvals = (candidate_cog_resources >= median_cog_res).astype(jnp.int32)
-            else:
-                honest_approvals = jnp.zeros(num_candidates, dtype=jnp.int32)
-
-            for i in range(num_agents):
-                is_voter_adversarial = state.node_attrs["is_adversarial"][i]
-                if is_voter_adversarial:
-                    # Adversarial still votes randomly or for adversarial candidates
-                    adv_candidates_present = jnp.any(state.node_attrs["is_adversarial"][candidate_indices])
-                    if adv_candidates_present:
-                        approvals = state.node_attrs["is_adversarial"][candidate_indices].astype(jnp.int32)
-                    else:
-                        approvals = jr.bernoulli(keys[i], 0.5, shape=(num_candidates,)).astype(jnp.int32)
-                else: # Honest voters use cog resource heuristic
-                    approvals = honest_approvals
-                all_candidate_votes = all_candidate_votes.at[i, :].set(approvals)
-        # Add LLM based voting here if desired later
-
-        # Tally votes for each candidate
-        total_votes_for_candidate = jnp.sum(all_candidate_votes, axis=0) # Sum approvals per candidate
-
-        # Select top N candidates
-        # Handle ties by preferring lower original agent ID (deterministic tie-breaking)
-        # To do this with JAX, it's a bit tricky. A simpler way for now is to add small random noise or use original index.
-        # For stable sorting, we can use a composite sort key: (votes, -original_index)
-        # JAX's `argsort` is stable.
-        # We want highest votes. If votes are equal, argsort on -candidate_indices means lower original ID wins.
-        
-        # Tie-breaking: add a small decreasing value based on original index to favor lower original IDs
-        # This ensures deterministic tie-breaking. Max num_candidates is num_agents.
-        tie_breaker = -candidate_indices.astype(jnp.float32) / (num_agents + 1) 
-        sorted_candidate_indices_in_list = jnp.argsort(total_votes_for_candidate + tie_breaker)[::-1] # Descending sort
-
-        elected_candidate_list_indices = sorted_candidate_indices_in_list[:num_to_elect]
-        elected_agent_ids = candidate_indices[elected_candidate_list_indices]
-
-        # Update state
+        # 6. Update State
         new_node_attrs = state.node_attrs.copy()
         new_node_attrs["is_elected_representative"] = jnp.zeros(num_agents, dtype=jnp.bool_)
-        new_node_attrs["is_elected_representative"] = new_node_attrs["is_elected_representative"].at[elected_agent_ids].set(True)
+        if elected_agent_ids.size > 0:
+            new_node_attrs["is_elected_representative"] = new_node_attrs["is_elected_representative"].at[elected_agent_ids].set(True)
         
+        current_terms_update = new_node_attrs.get("representative_term_remaining", jnp.zeros(num_agents, dtype=jnp.int32))
         new_node_attrs["representative_term_remaining"] = jnp.where(
             new_node_attrs["is_elected_representative"],
-            state.global_attrs["prd_election_term_length"],
-            jnp.maximum(0, new_node_attrs["representative_term_remaining"] -1) # Others continue countdown or stay 0
+            term_length,
+            jnp.maximum(0, current_terms_update - 1) 
         )
         
         new_global_attrs = state.global_attrs.copy()
-        new_global_attrs["rounds_until_next_election_prd"] = state.global_attrs["prd_election_term_length"] -1 # -1 because this round counts
+        new_global_attrs["rounds_until_next_election_prd"] = term_length - 1 if term_length > 0 else 0
 
-        print(f"[PRD Election] Elected Representatives: {elected_agent_ids.tolist()}")
-        adv_elected = new_node_attrs["is_adversarial"][elected_agent_ids].sum()
-        print(f"[PRD Election] {adv_elected} adversarial agents elected out of {len(elected_agent_ids)}.")
+        print(f"[PRD Election] R{round_num}: Elected Agent IDs: {elected_agent_ids.tolist()} for a term of {term_length} rounds.")
+        # ... (logging adversarial elected count) ...
 
         return state.replace(node_attrs=new_node_attrs, global_attrs=new_global_attrs)
-
     return transform

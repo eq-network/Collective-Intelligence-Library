@@ -54,11 +54,17 @@ class EnhancedResultsAggregator:
         # Storage for results
         self.all_run_data: List[pd.DataFrame] = []
         self.all_run_metadata: List[Dict[str, Any]] = []
+        self.all_anomaly_logs: List[Dict[str, Any]] = []  # ADD THIS LINE
         
         # Performance tracking
         self.total_timeline_points = 0
         self.total_simulations = 0
         self.memory_warnings = 0
+        
+        # Dynamic processing parameters
+        self.current_save_interval = 50  # Initial save interval
+        self.min_save_interval = 10     # Minimum interval under memory pressure
+        self.max_save_interval = 100    # Maximum interval under optimal conditions
         
         print(f"[AGGREGATOR_INIT] Memory limit: {memory_limit_gb}GB, Chunk size: {chunk_size}")
     
@@ -348,6 +354,89 @@ class EnhancedResultsAggregator:
             'memory_utilization_pct': (current_memory_gb / self.memory_limit_gb) * 100,
             'chunk_size': self.chunk_size
         }
+    
+    def add_anomalies(self, anomaly_list: List[Dict[str, Any]], run_metadata: Optional[Dict[str, Any]] = None):
+        """Adds a list of anomaly dictionaries, enriching them with run_metadata if provided."""
+        if not anomaly_list:
+            return
+
+        enriched_anomalies = []
+        for anomaly_dict_raw in anomaly_list:
+            if not isinstance(anomaly_dict_raw, dict):
+                print(f"Warning: Skipping non-dict anomaly item: {anomaly_dict_raw}")
+                continue
+
+            anomaly_dict = anomaly_dict_raw.copy()
+
+            if run_metadata:
+                for key, value in run_metadata.items():
+                    if key not in anomaly_dict:
+                        anomaly_dict[key] = value
+            enriched_anomalies.append(anomaly_dict)
+        
+        self.all_anomaly_logs.extend(enriched_anomalies)
+
+    def get_anomaly_logs_df(self) -> pd.DataFrame:
+        """Returns all collected anomaly logs as a DataFrame."""
+        if not self.all_anomaly_logs:
+            return pd.DataFrame()
+        try:
+            return pd.DataFrame(self.all_anomaly_logs)
+        except Exception as e:
+            print(f"Error converting anomaly logs to DataFrame: {e}")
+            valid_logs = [log for log in self.all_anomaly_logs if isinstance(log, dict)]
+            if valid_logs:
+                return pd.DataFrame(valid_logs)
+            return pd.DataFrame()
+
+    def save_results(self, base_filename_prefix: str, timestamp: str, 
+                    use_compression: bool = True, save_chunks: bool = False) -> None:
+        """Enhanced save with anomaly logs."""
+        print(f"[SAVE_START] Saving {self.total_simulations} simulations, {self.total_timeline_points} timeline points")
+        
+        # Generate filenames
+        compression_ext = ".gz" if use_compression else ""
+        data_filename = f"{base_filename_prefix}_timeline_data_{timestamp}.csv{compression_ext}"
+        metadata_filename = f"{base_filename_prefix}_metadata_{timestamp}.csv"
+        
+        # Save timeline data
+        timeline_data = self.get_concatenated_data()
+        if not timeline_data.empty:
+            save_start_time = pd.Timestamp.now()
+            
+            if save_chunks and len(timeline_data) > 100000:
+                self._save_in_chunks(timeline_data, data_filename, use_compression)
+            else:
+                compression = 'gzip' if use_compression else None
+                timeline_data.to_csv(data_filename, index=False, compression=compression)
+            
+            save_duration = (pd.Timestamp.now() - save_start_time).total_seconds()
+            file_size_mb = os.path.getsize(data_filename) / 1024**2
+            
+            print(f"[SAVE_COMPLETE] Timeline data saved: {data_filename}")
+            print(f"   File size: {file_size_mb:.1f}MB, Save time: {save_duration:.2f}s")
+        
+        # Save metadata
+        metadata_df = self.get_metadata_summary()
+        if not metadata_df.empty:
+            metadata_df.to_csv(metadata_filename, index=False)
+            print(f"[SAVE_COMPLETE] Metadata saved: {metadata_filename}")
+
+        # NEW: Save anomaly logs
+        anomaly_df = self.get_anomaly_logs_df()
+        if not anomaly_df.empty:
+            compression_ext_val = ".gz" if use_compression else ""
+            anomaly_filename = f"{base_filename_prefix}_anomaly_logs_{timestamp}.csv{compression_ext_val}"
+            compression_method = 'gzip' if use_compression else None
+            
+            try:
+                anomaly_df.to_csv(anomaly_filename, index=False, compression=compression_method)
+                print(f"[SAVE_COMPLETE] Anomaly logs saved: {anomaly_filename}")
+            except Exception as e:
+                print(f"[SAVE_ERROR] Could not save anomaly logs: {e}")
+        else:
+            print("[INFO] No anomaly logs to save.")
+
 
 
 # BACKWARD COMPATIBILITY: Alias for existing code

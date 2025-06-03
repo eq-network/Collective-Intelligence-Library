@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from typing import List, Literal, Callable, Dict, Any, Optional
 
 # Import your config factory functions from environments.democracy.configuration
-from environments.democracy.configuration import (
+from environments.noise_democracy.configuration import (
     PortfolioDemocracyConfig,
     create_thesis_baseline_config,
     create_thesis_highvariance_config # Assuming you've defined this as discussed
@@ -19,10 +19,9 @@ class SingleRunParameters:
     adversarial_proportion_total: float
     replication_run_index: int
     unique_config_seed: int # The specific seed for PortfolioDemocracyConfig
-
-    # Name of the factory function to call to get the PortfolioDemocracyConfig
-    # This allows us to choose between create_thesis_baseline_config, create_thesis_highvariance_config, etc.
     config_factory_name: str # e.g., "baseline" or "high_variance"
+    # Parameters with default values
+    adversarial_framing: str = "antifragility"  # New parameter for adversarial framing
     llm_model: Optional[str] = None # The LLM model to use for this run, if any
     # The worker will call the appropriate factory with:
     # factory(mechanism=..., adversarial_proportion_total=..., seed=...)
@@ -31,54 +30,42 @@ class SingleRunParameters:
 
 @dataclass
 class ExperimentDefinition:
-    """Defines a single type of experiment to sweep over."""
-    name: str # e.g., "Baseline_Experiment" or "HighVariance_Experiment"
-    
-    # The function from configuration.py that will create the PortfolioDemocracyConfig
-    # e.g., create_thesis_baseline_config or create_thesis_highvariance_config
-    config_factory_func_name: str # Store the name of the function
-
-    # Parameters to sweep for this specific experiment definition
+    """Defines a single experiment to run."""
+    name: str  # e.g., "BaselineSweep" or "HighVarianceStressTest"
+    config_factory_func_name: str  # e.g., "baseline" or "high_variance"
     mechanisms_to_test: List[Literal["PDD", "PRD", "PLD"]]
     adversarial_proportions_to_sweep: List[float]
-    
     num_replications_per_setting: int
-    base_seed_for_experiment: int # Master seed for this specific experiment definition
-    llm_model: Optional[str] = None # LLM model for this entire experiment definition
+    base_seed_for_experiment: int
+    llm_model: Optional[str] = None  # The LLM model to use for this experiment, if any
+    adversarial_framing: str = "antifragility"  # The adversarial framing to use for this experiment
 
 
-def generate_all_run_parameters(
-    experiment_definitions: List[ExperimentDefinition],
-    global_run_id_offset: int = 0
-) -> List[SingleRunParameters]:
-    """
-    Generates a flat list of all SingleRunParameters for all defined experiments.
-    """
-    all_single_run_params_list = []
-    current_overall_run_id_counter = global_run_id_offset
-
-    for exp_def in experiment_definitions:
-        num_settings_in_exp = len(exp_def.mechanisms_to_test) * len(exp_def.adversarial_proportions_to_sweep)
-        
-        for i_mech, mech in enumerate(exp_def.mechanisms_to_test):
-            for i_adv, adv_prop_total in enumerate(exp_def.adversarial_proportions_to_sweep):
-                for i_rep in range(exp_def.num_replications_per_setting):
-                    # Create a unique seed for this specific run configuration
-                    # Based on experiment's base seed and the specific setting
-                    setting_offset = (i_mech * len(exp_def.adversarial_proportions_to_sweep) + i_adv) * exp_def.num_replications_per_setting
-                    unique_run_config_seed = exp_def.base_seed_for_experiment + setting_offset + i_rep
-
-                    params = SingleRunParameters(
-                        run_id=current_overall_run_id_counter,
-                        experiment_name=exp_def.name, # To identify which experiment this run belongs to
-                        mechanism=mech,
-                        adversarial_proportion_total=adv_prop_total,
-                        replication_run_index=i_rep,
-                        unique_config_seed=unique_run_config_seed,
-                        config_factory_name=exp_def.config_factory_func_name, # Worker will use this
-                        llm_model=exp_def.llm_model
-                    )
-                    all_single_run_params_list.append(params)
-                    current_overall_run_id_counter += 1
+def generate_all_run_parameters(experiments: List[ExperimentDefinition], global_run_id_offset: int = 0) -> List[SingleRunParameters]:
+    """Generate a list of SingleRunParameters for all defined experiments."""
+    all_params = []
+    for exp in experiments:
+        # For each experiment, mechanism, and adversarial proportion, generate num_replications_per_setting runs
+        for mechanism in exp.mechanisms_to_test:
+            for adv_prop in exp.adversarial_proportions_to_sweep:
+                for rep_idx in range(exp.num_replications_per_setting):
+                    # Calculate a unique seed for this specific run
+                    # This ensures that even with the same base seed, different experiments get different seeds
+                    # We use a hash of the experiment name to get different starting points
+                    experiment_name_hash = hash(exp.name) % 10000  # Get a 4-digit number from the hash
+                    unique_seed = exp.base_seed_for_experiment + experiment_name_hash + rep_idx
                     
-    return all_single_run_params_list
+                    # Create the run parameters
+                    run_params = SingleRunParameters(
+                        run_id=len(all_params) + global_run_id_offset,  # Add the global offset to the run_id
+                        experiment_name=exp.name,
+                        mechanism=mechanism,
+                        adversarial_proportion_total=adv_prop,
+                        replication_run_index=rep_idx,
+                        unique_config_seed=unique_seed,
+                        config_factory_name=exp.config_factory_func_name,
+                        llm_model=exp.llm_model,
+                        adversarial_framing=exp.adversarial_framing  # Add the adversarial framing
+                    )
+                    all_params.append(run_params)
+    return all_params
