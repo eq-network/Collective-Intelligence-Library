@@ -4,6 +4,207 @@ A principled approach to multi-agent simulation using category theory, functiona
 
 You can see the diagrams here: https://excalidraw.com/#room=f4116b0ba2d8d5095d85,zSDwGDuqMZI4uxu4CTQuHg
 
+## Quick Start
+
+### Running Experiments
+
+The main entry point for running simulations is `experiments/run_portfolio_experiment.py`. This script defines and executes complete experimental suites:
+
+```bash
+cd experiments
+python run_portfolio_experiment.py
+```
+
+This will run the predefined experiments, which test different democratic mechanisms (PDD, PRD, PLD) across various conditions.
+
+### Basic Usage Pattern
+
+1. **Define Experiments** - Configure what you want to test
+2. **Run Simulations** - Execute experiments in parallel
+3. **Analyze Results** - Generate visualizations and statistics
+
+Here's how the pieces fit together:
+
+```python
+# 1. Define an experiment in run_portfolio_experiment.py
+experiment = ExperimentDefinition(
+    name="MyExperiment",
+    config_factory_func_name="create_stable_democracy_config",
+    mechanisms_to_test=["PDD", "PRD", "PLD"],
+    adversarial_proportions_to_sweep=[0.0, 0.2, 0.4],
+    num_replications_per_setting=5,
+    base_seed_for_experiment=42
+)
+
+# 2. The system automatically:
+# - Generates all parameter combinations
+# - Runs simulations in parallel
+# - Collects timeline data from each simulation
+# - Aggregates results and generates analysis
+```
+
+## System Architecture
+
+### Environments
+
+The system supports different simulation environments, each with its own configuration and mechanisms:
+
+#### `environments/stable_democracy/`
+- **Purpose**: Deterministic simulations with perfect information
+- **Configuration**: `StablePortfolioDemocracyConfig`
+- **Factory**: `create_stable_democracy_config()`
+- **Features**: Participation constraints, multiple adversarial framings
+
+#### `environments/noise_democracy/`
+- **Purpose**: Realistic simulations with information noise and cognitive constraints
+- **Configuration**: `PortfolioDemocracyConfig` 
+- **Factories**: `create_thesis_baseline_config()`, `create_thesis_highvariance_config()`
+- **Features**: Cognitive resource modeling, prediction market noise
+
+### Democratic Mechanisms
+
+Each environment implements three core democratic mechanisms:
+
+- **PDD (Predictive Direct Democracy)**: One-agent-one-vote with prediction market information
+- **PRD (Predictive Representative Democracy)**: Elected representatives make decisions
+- **PLD (Predictive Liquid Democracy)**: Agents can delegate their voting power to others
+
+### Experiment Framework
+
+```
+experiments/
+├── run_portfolio_experiment.py    # Main entry point - define experiments here
+├── experiment_config.py           # Experiment definition structures
+├── runner.py                     # Parallel execution engine
+├── worker.py                     # Individual simulation execution
+├── results.py                    # Result aggregation and storage
+├── analysis.py                   # Visualization and statistical analysis
+└── progress_tracker.py           # Real-time progress monitoring
+```
+
+## Customizing Experiments
+
+### 1. Modify Existing Experiments
+
+Edit `run_portfolio_experiment.py` to change experiment parameters:
+
+```python
+def define_all_experiments() -> List[ExperimentDefinition]:
+    experiments = []
+    
+    # Customize this experiment
+    my_experiment = ExperimentDefinition(
+        name="CustomTest",
+        config_factory_func_name="create_stable_democracy_config",
+        mechanisms_to_test=["PLD"],  # Test only liquid democracy
+        adversarial_proportions_to_sweep=[0.1, 0.3, 0.5],  # Custom proportions
+        num_replications_per_setting=10,  # More replications
+        base_seed_for_experiment=12345,
+        llm_model='openai/gpt-4o-mini',  # Specify LLM model
+        adversarial_framing="competitive"  # Adversarial agent framing
+    )
+    experiments.append(my_experiment)
+    
+    return experiments
+```
+
+### 2. Create New Configurations
+
+Add new configuration variants in the appropriate environment:
+
+```python
+# In environments/stable_democracy/configuration.py
+def create_my_custom_config(
+    mechanism: Literal["PDD", "PRD", "PLD"],
+    adversarial_proportion_total: float,
+    seed: int = 42,
+    # Your custom parameters
+    custom_parameter: float = 1.0
+) -> StablePortfolioDemocracyConfig:
+    # Your custom configuration logic
+    return create_stable_democracy_config(
+        mechanism=mechanism,
+        adversarial_proportion_total=adversarial_proportion_total,
+        seed=seed,
+        # Apply your customizations
+        num_agents=20,  # Different agent count
+        delegate_participation_rate=0.8,  # Custom participation
+        # etc.
+    )
+```
+
+Then register it in `experiments/worker.py`:
+
+```python
+CONFIG_FACTORIES = {
+    "create_stable_democracy_config": create_stable_democracy_config,
+    "create_my_custom_config": create_my_custom_config,  # Add your factory
+    # ... other factories
+}
+```
+
+### 3. Add LLM Integration
+
+The system supports optional LLM integration for agent decision-making. Configure by setting the `llm_model` parameter and ensuring you have the appropriate API key:
+
+```bash
+export OPENROUTER_API_KEY="your_api_key_here"
+```
+
+Supported model formats (via OpenRouter):
+- `'openai/gpt-4o-mini'`
+- `'google/gemini-2.5-flash-preview-05-20'`
+- `'anthropic/claude-3.5-haiku'`
+
+## Output and Analysis
+
+### Generated Files
+
+When you run experiments, the system creates:
+
+```
+experiment_outputs/
+└── TimelinePortfolioDemocracySuite_YYYYMMDD_HHMMSS/
+    ├── ExperimentName_TIMESTAMP/
+    │   ├── aggregated_results_timeline_data_TIMESTAMP.csv.gz    # Raw timeline data
+    │   ├── aggregated_results_metadata_TIMESTAMP.csv           # Simulation metadata
+    │   ├── aggregated_results_anomaly_logs_TIMESTAMP.csv.gz    # Behavioral anomalies
+    │   ├── individual_trajectories_TIMESTAMP.png              # Sample trajectories
+    │   ├── aggregated_trajectories_TIMESTAMP.png              # Mechanism comparison
+    │   ├── resource_change_distributions_TIMESTAMP.png        # Round-to-round changes
+    │   └── timeline_summary_stats_TIMESTAMP.csv               # Statistical summary
+    └── [Additional experiments...]
+```
+
+### Key Metrics
+
+The system tracks comprehensive metrics including:
+
+- **Resource Trajectories**: Round-by-round resource levels for each simulation
+- **Decision Quality**: Optimality of portfolio choices relative to available information
+- **Mechanism Performance**: Comparative effectiveness across democratic systems
+- **Behavioral Anomalies**: Detection of unexpected agent behaviors
+- **Participation Patterns**: Agent engagement and delegation dynamics
+
+## Understanding Results
+
+### Timeline Data Structure
+
+Each simulation generates timeline data with one row per round:
+
+```csv
+run_id,round,resources_after,chosen_portfolio_idx,mechanism,adversarial_proportion_total,...
+1,0,105.2,2,PLD,0.2,...
+1,1,98.7,1,PLD,0.2,...
+1,2,103.1,0,PLD,0.2,...
+```
+
+### Visualization Types
+
+1. **Individual Trajectories**: Show resource progression for sample simulations
+2. **Aggregated Trajectories**: Compare mechanism performance with confidence intervals
+3. **Distribution Analysis**: Examine round-to-round resource change patterns
+4. **Mechanism Comparison**: Performance across different adversarial conditions
 
 ## Core Principles
 
@@ -87,126 +288,6 @@ The core data structure is the `GraphState`, which functions as a monad in the c
 - It enables composition of operations
 
 This monad-based approach gives us a mathematically sound way to represent and transform complex system states.
-
-## Architecture
-
-```
-project/
-├── core/                       # Mathematical foundations
-│   ├── graph.py                # Graph monad definition
-│   ├── property.py             # Property system
-│   └── category.py             # Morphism and composition
-│
-├── transformations/            # Pure transformations
-│   ├── bottom_up/              # Communication mechanisms  
-│   │   ├── information.py      # Information signal transformations
-│   │   └── updating.py         # Belief/state updating transformations
-│   │
-│   └── top_down/               # Regularization mechanisms
-│       ├── democracy.py        # Voting transformations
-│       ├── market.py           # Trading transformations
-│       └── regulation.py       # Constraint enforcement transformations
-│
-├── services/                   # External service interfaces
-│   ├── llm.py                  # LLM client interface
-│   └── storage.py              # Persistence services
-│
-└── implementations/            # Concrete implementations
-    ├── adapters/               # Service adapters
-    │   └── llm_adapter.py      # Connects transformations to LLM services
-    └── simulations/            # Pre-configured simulations
-        └── trading_sim.py      # Trading simulation
-```
-
-### Key Components
-
-#### Core Layer
-
-- **GraphState**: Immutable representation of a graph with node attributes, adjacency matrices, and global attributes
-- **Property**: First-class representation of invariants that can be verified on graph states
-- **Category**: Functions for composition and transformation of graph states
-
-#### Transformation Layer
-
-- **Bottom-Up**: Pure functions for agent-to-agent communication and belief updating
-- **Top-Down**: Pure functions for global coordination mechanisms like voting and markets
-
-#### Services Layer
-
-- External service interfaces (LLMs, storage, etc.)
-- Clean boundaries between pure transformations and impure services
-
-#### Implementations Layer
-
-- Adapters connecting pure transformations to external services
-- Pre-configured simulations combining multiple transformations
-
-## JAX Integration
-
-GraphTransform uses JAX to accelerate computations while maintaining functional purity:
-
-- **JIT Compilation**: Transformations can be JIT-compiled for performance
-- **Automatic Differentiation**: Transformations can be differentiated for gradient-based analyses
-- **Vectorization**: Batch processing of transformations across multiple states
-- **GPU/TPU Acceleration**: Transformations run efficiently on accelerated hardware
-
-The functional paradigm aligns perfectly with JAX's design philosophy, enabling seamless integration.
-
-## Practical Use Cases
-
-GraphTransform is designed for modeling complex multi-agent systems including:
-
-- **Collective Intelligence**: How groups make decisions and process information
-- **Market Dynamics**: Trading, pricing, and resource allocation
-- **Social Networks**: Information diffusion and belief formation
-- **Democratic Systems**: Voting mechanisms and delegation patterns
-- **Institutional Design**: Testing mechanisms for robust governance
-
-## Development Principles
-
-1. **Functional Core, Imperative Shell**: Pure transformations in the core, service dependencies isolated in adapters
-
-2. **Dependency Inversion**: Transformations define interfaces that services fulfill, rather than depending directly on services
-
-3. **Composition Over Inheritance**: Systems built by composing smaller, well-defined transformations
-
-4. **Typed Interfaces**: Clear type signatures for all transformations and compositions
-
-5. **Property-Based Testing**: Testing transformations based on the properties they preserve
-
-## Example Usage
-
-Here's a simple example of defining and composing transformations:
-
-```python
-# Define transformations
-info_transform = lambda state: information_transform(state, info_generator)
-belief_updater = lambda state: belief_update_transform(state, belief_update_function)
-market = trading_transform
-
-# Compose into a simulation step
-simulation_step = sequential(
-    info_transform,     # Generate information
-    belief_updater,     # Update beliefs
-    market              # Execute trades
-)
-
-# Apply to graph state
-result = simulation_step(initial_state)
-```
-
-To use with LLM services:
-
-```python
-# Initialize LLM service
-llm_service = OpenAIService(api_key, model)
-
-# Create LLM-based belief updater through adapter
-belief_updater = create_llm_belief_updater(llm_service)
-
-# Use in composition as before
-simulation_step = sequential(info_transform, belief_updater, market)
-```
 
 ## Installation
 
