@@ -4,8 +4,8 @@ import pandas as pd
 import time
 from typing import Dict, List, Any, Optional, Callable
 
-from core.graph import GraphState
-from core.category import Transform
+from algebra.graph import GraphState
+from algebra.category import Transform
 
 class MetricsCollector:
     """

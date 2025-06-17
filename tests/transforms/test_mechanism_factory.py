@@ -13,9 +13,9 @@ project_root = Path(__file__).resolve().parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from core.graph import GraphState
-from environments.noise_democracy.mechanism_factory import create_llm_agent_decision_transform
-from environments.noise_democracy.configuration import create_thesis_baseline_config, PortfolioDemocracyConfig
+from algebra.graph import GraphState
+from environments.random.mechanism_factory import create_llm_agent_decision_transform
+from environments.random.configuration import create_thesis_baseline_config, PortfolioDemocracyConfig
 from services.llm import LLMService, create_llm_service
 
 # Module-level variable for the service, to be populated by setUpModule

@@ -2,8 +2,8 @@
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Any, Optional
-from core.graph import GraphState
-from core.category import Transform
+from algebra.graph import GraphState
+from algebra.category import Transform
 
 class HistoryTracker:
     """

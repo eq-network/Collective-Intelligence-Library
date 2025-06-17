@@ -9,7 +9,7 @@ project_root = Path(__file__).resolve().parent.parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from core.graph import GraphState
+from algebra.graph import GraphState
 # The _portfolio_vote_aggregator is likely defined within mechanism_factory.py
 # or passed into create_voting_transform.
 # For this test, we'll assume you can import/access it.
@@ -19,7 +19,7 @@ from core.graph import GraphState
 # Let's assume _portfolio_vote_aggregator is accessible or you test create_voting_transform
 # For simplicity, let's test create_voting_transform with the aggregator.
 from transformations.top_down.democratic_transforms.voting import create_voting_transform
-from environments.noise_democracy.mechanism_factory import _portfolio_vote_aggregator # Assuming it's importable
+from environments.random.mechanism_factory import _portfolio_vote_aggregator # Assuming it's importable
 
 class TestVotingTransform(unittest.TestCase):
 

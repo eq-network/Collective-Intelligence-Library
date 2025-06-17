@@ -3,12 +3,12 @@ import jax.numpy as jnp
 import jax.random
 
 # Adjust imports based on your project structure
-from environments.noise_democracy.configuration import (
+from environments.random.configuration import (
     create_thesis_baseline_config,
     PromptConfig,
     PortfolioDemocracyConfig
 )
-from environments.noise_democracy.initialization import initialize_portfolio_democracy_graph_state
+from environments.random.initialization import initialize_portfolio_democracy_graph_state
 
 class TestPromptGeneration(unittest.TestCase):
 

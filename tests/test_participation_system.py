@@ -15,18 +15,18 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 
-from core.graph import GraphState
-from core.category import Transform
-from environments.stable_democracy.configuration import (
+from algebra.graph import GraphState
+from algebra.category import Transform
+from environments.stable.configuration import (
     StablePortfolioDemocracyConfig, ParticipationConfig, LockedValueConfig,
     create_stable_democracy_config # Using the new factory
 )
-from environments.stable_democracy.initialization import (
+from environments.stable.initialization import (
     initialize_stable_democracy_graph_state, # Using new init
     get_stable_true_expected_yields_for_round
 )
 
-from environments.stable_democracy.mechanism_factory import create_stable_prediction_signal_transform 
+from environments.stable.mechanism_factory import create_stable_prediction_signal_transform 
 from transformations.top_down.democratic_transforms.participation import create_participation_constraint_transform
 # Prediction signal transform for stable system
 from services.llm import LLMService # For type hint, can be None for these tests
@@ -250,7 +250,7 @@ class TestStableParticipationSystem(unittest.TestCase):
             def generate(self, prompt, max_tokens): return "Action: VOTE\nVotes: [1,0,0]"
         
         # Use the stable_llm_agent_decision_transform from the stable_democracy factory
-        from environments.stable_democracy.mechanism_factory import create_stable_llm_agent_decision_transform
+        from environments.stable.mechanism_factory import create_stable_llm_agent_decision_transform
         agent_decision_tf = create_stable_llm_agent_decision_transform(MockLLM(), "PLD", pld_stable_config)
         
         final_state = agent_decision_tf(state)

@@ -29,15 +29,15 @@ root_dir = Path(__file__).resolve().parent.parent
 if str(root_dir) not in sys.path:
     sys.path.insert(0, str(root_dir))
 
-from core.graph import GraphState
-from environments.noise_democracy.configuration import (
+from algebra.graph import GraphState
+from environments.random.configuration import (
     create_thesis_baseline_config, 
     PortfolioDemocracyConfig,
     CropConfig,
     PortfolioStrategyConfig
 )
-from environments.noise_democracy.initialization import initialize_portfolio_democracy_graph_state
-from environments.noise_democracy.mechanism_factory import create_llm_agent_decision_transform
+from environments.random.initialization import initialize_portfolio_democracy_graph_state
+from environments.random.mechanism_factory import create_llm_agent_decision_transform
 from services.llm import create_llm_service, LLMService
 
 class AdversarialBehaviorAnalyzer:

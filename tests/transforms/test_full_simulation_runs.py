@@ -14,8 +14,8 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 # ARCHITECTURAL ENHANCEMENT: Import new cognitive resource configuration classes
-from core.graph import GraphState
-from environments.noise_democracy.configuration import (
+from algebra.graph import GraphState
+from environments.random.configuration import (
     create_thesis_baseline_config, 
     PortfolioDemocracyConfig, 
     CropConfig, 
@@ -23,13 +23,13 @@ from environments.noise_democracy.configuration import (
     CognitiveResourceConfig  # NEW: Import cognitive resource configuration
 )
 from services.llm import LLMService, create_llm_service
-from environments.noise_democracy.mechanism_factory import create_llm_agent_decision_transform
+from environments.random.mechanism_factory import create_llm_agent_decision_transform
 
 # ARCHITECTURAL PRESERVATION: Maintain existing import pattern for simulation function
 run_single_simulation_imported_function = None
 import_error_message = None
 try:
-    from main.run_portfolio_simulation import run_single_simulation as rss_func
+    from execution.simulations.democratic_simulation import run_single_simulation as rss_func
     run_single_simulation_imported_function = rss_func
     print("[INFO] Successfully imported run_single_simulation.")
 except ModuleNotFoundError:

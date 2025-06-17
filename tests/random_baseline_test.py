@@ -20,18 +20,18 @@ root_dir = Path(__file__).resolve().parent.parent
 if str(root_dir) not in sys.path:
     sys.path.insert(0, str(root_dir))
 
-from core.graph import GraphState
-from environments.noise_democracy.configuration import (
+from algebra.graph import GraphState
+from environments.random.configuration import (
     PortfolioDemocracyConfig,
     CropConfig,
     PortfolioStrategyConfig,
     create_thesis_baseline_config as actual_create_thesis_baseline_config # Alias
 )
-from environments.noise_democracy.initialization import (
+from environments.random.initialization import (
     initialize_portfolio_democracy_graph_state,
     get_true_expected_yields_for_round
 )
-from environments.noise_democracy.mechanism_factory import create_portfolio_mechanism_pipeline
+from environments.random.mechanism_factory import create_portfolio_mechanism_pipeline
 from services.llm import create_llm_service, LLMService
 
 class TestMechanismVsRandomBaseline(unittest.TestCase):
