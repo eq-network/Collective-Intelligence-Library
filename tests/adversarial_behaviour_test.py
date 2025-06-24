@@ -29,7 +29,7 @@ root_dir = Path(__file__).resolve().parent.parent
 if str(root_dir) not in sys.path:
     sys.path.insert(0, str(root_dir))
 
-from algebra.graph import GraphState
+from core.graph import GraphState
 from environments.random.configuration import (
     create_thesis_baseline_config, 
     PortfolioDemocracyConfig,

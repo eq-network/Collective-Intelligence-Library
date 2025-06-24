@@ -11,9 +11,9 @@ root_dir = Path(__file__).resolve().parent.parent.parent
 if str(root_dir) not in sys.path:
     sys.path.insert(0, str(root_dir))
 
-from algebra.graph import GraphState
-from algebra.category import Transform
-from algebra.property import Property
+from core.graph import GraphState
+from core.category import Transform
+from core.property import Property
 
 class PropertyVerifier:
     """

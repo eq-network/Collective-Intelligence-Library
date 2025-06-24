@@ -1,5 +1,5 @@
 # lib/quick_run.py - NEW FILE  
-from experiments.democracy.runner import EnhancedParallelExperimentRunner
+from experiments.runner import EnhancedParallelExperimentRunner
 from experiments.democracy.experiment_config import generate_all_run_parameters
 from typing import Dict, Any
 

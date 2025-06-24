@@ -14,7 +14,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 # ARCHITECTURAL ENHANCEMENT: Import new cognitive resource configuration classes
-from algebra.graph import GraphState
+from core.graph import GraphState
 from environments.random.configuration import (
     create_thesis_baseline_config, 
     PortfolioDemocracyConfig, 

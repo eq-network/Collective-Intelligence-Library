@@ -15,8 +15,8 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 
-from algebra.graph import GraphState
-from algebra.category import Transform
+from core.graph import GraphState
+from core.category import Transform
 from environments.stable.configuration import (
     StablePortfolioDemocracyConfig, ParticipationConfig, LockedValueConfig,
     create_stable_democracy_config # Using the new factory

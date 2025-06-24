@@ -9,7 +9,7 @@ project_root = Path(__file__).resolve().parent.parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from algebra.graph import GraphState
+from core.graph import GraphState
 # The _portfolio_vote_aggregator is likely defined within mechanism_factory.py
 # or passed into create_voting_transform.
 # For this test, we'll assume you can import/access it.
