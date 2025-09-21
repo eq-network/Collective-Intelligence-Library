@@ -300,7 +300,7 @@ pip install graph-transform
 - [Category Theory for Programmers](https://bartoszmilewski.com/2014/10/28/category-theory-for-programmers-the-preface/)
 - [Functional Programming in Python](https://docs.python.org/3/howto/functional.html)
 - [JAX Documentation](https://jax.readthedocs.io/)
-- [A Process-Centric Multi-Agent Simulation Manifesto](https://example.com)
+- [A Process-Centric Multi-Agent Simulation Manifesto](/Manifesto.md)
 
 ## License
 
