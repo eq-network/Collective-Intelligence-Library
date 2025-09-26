@@ -4,9 +4,7 @@ Mycorrhiza: A process-centric multi-agent simulation platform
 """
 
 # Expose your existing core architecture (unchanged)
-from .core.graph import GraphState
-from .core.category import Transform, sequential, compose
-from .experiments.experiment_config import ExperimentDefinition
+
 
 # Add convenience functions (new)
 from lib.quick_run import quick_experiment
