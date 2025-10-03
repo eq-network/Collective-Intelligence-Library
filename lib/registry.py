@@ -1,6 +1,5 @@
 # lib/registry.py - NEW FILE
 from typing import Dict, Callable, Any, List
-from experiments.democracy.experiment_config import ExperimentDefinition
 
 class SimulationRegistry:
     """Simple registry for discovering pre-configured simulations"""
