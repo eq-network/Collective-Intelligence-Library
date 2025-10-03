@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import dataclasses
 from typing import Dict, Any, Set, Tuple, Optional, TypeVar, List, Callable
 from functools import partial
+from dataclasses import field
 
 @dataclasses.dataclass(frozen=True)
 class GraphState:
@@ -19,14 +20,11 @@ class GraphState:
     adjacency matrices, and global attributes. It's designed to be immutable
     and compatible with JAX transformations.
     """
-    # Node attributes as arrays (each attribute is an array with shape [num_nodes, ...])
+    node_types: jnp.ndarray
+    
     node_attrs: Dict[str, jnp.ndarray]
-    
-    # Adjacency matrices (one per edge type, shape [num_nodes, num_nodes])
     adj_matrices: Dict[str, jnp.ndarray]
-    
-    # Global attributes (can include non-JAX objects)
-    global_attrs: Dict[str, Any] = None
+    global_attrs: Dict[str, Any] = field(default_factory=dict)
     
     def __post_init__(self):
         # Ensure global_attrs is initialized
