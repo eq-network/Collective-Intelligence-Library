@@ -1,307 +1,144 @@
-# GraphTransform Framework
+# Collective Intelligence Library: Process-Centric Multi-Agent Simulation
 
-A principled approach to multi-agent simulation using category theory, functional programming, and JAX acceleration.
+A functional framework for building multi-agent simulations using graph transformations and category theory.
 
-You can see the diagrams here: https://excalidraw.com/#room=f4116b0ba2d8d5095d85,zSDwGDuqMZI4uxu4CTQuHg
+## What Is This?
 
-## Quick Start
+The Collective Intelligence Library treats simulations as **pure transformations on graph states** rather than object-oriented state mutations. This makes complex multi-agent systems easier to reason about, compose, and verify.
 
-### Running Experiments
+**Core Principle**: `GraphState → Transform → GraphState → Transform → ...`
 
-The main entry point for running simulations is `experiments/run_portfolio_experiment.py`. This script defines and executes complete experimental suites:
+That's it. Everything else is optimization or convenience.
 
-```bash
-cd experiments
-python run_portfolio_experiment.py
-```
+## Getting Started
 
-This will run the predefined experiments, which test different democratic mechanisms (PDD, PRD, PLD) across various conditions.
+If you're new to the framework, start with the [Start Here Guide](Start_Here.md) which walks you through building your first simulation in about 30 minutes. For a deeper understanding of the conceptual foundations and design philosophy, read the [Manifesto](Manifesto.md).
 
-### Basic Usage Pattern
-
-1. **Define Experiments** - Configure what you want to test
-2. **Run Simulations** - Execute experiments in parallel
-3. **Analyze Results** - Generate visualizations and statistics
-
-Here's how the pieces fit together:
-
-```python
-# 1. Define an experiment in run_portfolio_experiment.py
-experiment = ExperimentDefinition(
-    name="MyExperiment",
-    config_factory_func_name="create_stable_democracy_config",
-    mechanisms_to_test=["PDD", "PRD", "PLD"],
-    adversarial_proportions_to_sweep=[0.0, 0.2, 0.4],
-    num_replications_per_setting=5,
-    base_seed_for_experiment=42
-)
-
-# 2. The system automatically:
-# - Generates all parameter combinations
-# - Runs simulations in parallel
-# - Collects timeline data from each simulation
-# - Aggregates results and generates analysis
-```
-
-## System Architecture
-
-### Environments
-
-The system supports different simulation environments, each with its own configuration and mechanisms:
-
-#### `environments/stable_democracy/`
-- **Purpose**: Deterministic simulations with perfect information
-- **Configuration**: `StablePortfolioDemocracyConfig`
-- **Factory**: `create_stable_democracy_config()`
-- **Features**: Participation constraints, multiple adversarial framings
-
-#### `environments/noise_democracy/`
-- **Purpose**: Realistic simulations with information noise and cognitive constraints
-- **Configuration**: `PortfolioDemocracyConfig` 
-- **Factories**: `create_thesis_baseline_config()`, `create_thesis_highvariance_config()`
-- **Features**: Cognitive resource modeling, prediction market noise
-
-### Democratic Mechanisms
-
-Each environment implements three core democratic mechanisms:
-
-- **PDD (Predictive Direct Democracy)**: One-agent-one-vote with prediction market information
-- **PRD (Predictive Representative Democracy)**: Elected representatives make decisions
-- **PLD (Predictive Liquid Democracy)**: Agents can delegate their voting power to others
-
-### Experiment Framework
-
-```
-experiments/
-├── run_portfolio_experiment.py    # Main entry point - define experiments here
-├── experiment_config.py           # Experiment definition structures
-├── runner.py                     # Parallel execution engine
-├── worker.py                     # Individual simulation execution
-├── results.py                    # Result aggregation and storage
-├── analysis.py                   # Visualization and statistical analysis
-└── progress_tracker.py           # Real-time progress monitoring
-```
-
-## Customizing Experiments
-
-### 1. Modify Existing Experiments
-
-Edit `run_portfolio_experiment.py` to change experiment parameters:
-
-```python
-def define_all_experiments() -> List[ExperimentDefinition]:
-    experiments = []
-    
-    # Customize this experiment
-    my_experiment = ExperimentDefinition(
-        name="CustomTest",
-        config_factory_func_name="create_stable_democracy_config",
-        mechanisms_to_test=["PLD"],  # Test only liquid democracy
-        adversarial_proportions_to_sweep=[0.1, 0.3, 0.5],  # Custom proportions
-        num_replications_per_setting=10,  # More replications
-        base_seed_for_experiment=12345,
-        llm_model='openai/gpt-4o-mini',  # Specify LLM model
-        adversarial_framing="competitive"  # Adversarial agent framing
-    )
-    experiments.append(my_experiment)
-    
-    return experiments
-```
-
-### 2. Create New Configurations
-
-Add new configuration variants in the appropriate environment:
-
-```python
-# In environments/stable_democracy/configuration.py
-def create_my_custom_config(
-    mechanism: Literal["PDD", "PRD", "PLD"],
-    adversarial_proportion_total: float,
-    seed: int = 42,
-    # Your custom parameters
-    custom_parameter: float = 1.0
-) -> StablePortfolioDemocracyConfig:
-    # Your custom configuration logic
-    return create_stable_democracy_config(
-        mechanism=mechanism,
-        adversarial_proportion_total=adversarial_proportion_total,
-        seed=seed,
-        # Apply your customizations
-        num_agents=20,  # Different agent count
-        delegate_participation_rate=0.8,  # Custom participation
-        # etc.
-    )
-```
-
-Then register it in `experiments/worker.py`:
-
-```python
-CONFIG_FACTORIES = {
-    "create_stable_democracy_config": create_stable_democracy_config,
-    "create_my_custom_config": create_my_custom_config,  # Add your factory
-    # ... other factories
-}
-```
-
-### 3. Add LLM Integration
-
-The system supports optional LLM integration for agent decision-making. Configure by setting the `llm_model` parameter and ensuring you have the appropriate API key:
-
-```bash
-export OPENROUTER_API_KEY="your_api_key_here"
-```
-
-Supported model formats (via OpenRouter):
-- `'openai/gpt-4o-mini'`
-- `'google/gemini-2.5-flash-preview-05-20'`
-- `'anthropic/claude-3.5-haiku'`
-
-## Output and Analysis
-
-### Generated Files
-
-When you run experiments, the system creates:
-
-```
-experiment_outputs/
-└── TimelinePortfolioDemocracySuite_YYYYMMDD_HHMMSS/
-    ├── ExperimentName_TIMESTAMP/
-    │   ├── aggregated_results_timeline_data_TIMESTAMP.csv.gz    # Raw timeline data
-    │   ├── aggregated_results_metadata_TIMESTAMP.csv           # Simulation metadata
-    │   ├── aggregated_results_anomaly_logs_TIMESTAMP.csv.gz    # Behavioral anomalies
-    │   ├── individual_trajectories_TIMESTAMP.png              # Sample trajectories
-    │   ├── aggregated_trajectories_TIMESTAMP.png              # Mechanism comparison
-    │   ├── resource_change_distributions_TIMESTAMP.png        # Round-to-round changes
-    │   └── timeline_summary_stats_TIMESTAMP.csv               # Statistical summary
-    └── [Additional experiments...]
-```
-
-### Key Metrics
-
-The system tracks comprehensive metrics including:
-
-- **Resource Trajectories**: Round-by-round resource levels for each simulation
-- **Decision Quality**: Optimality of portfolio choices relative to available information
-- **Mechanism Performance**: Comparative effectiveness across democratic systems
-- **Behavioral Anomalies**: Detection of unexpected agent behaviors
-- **Participation Patterns**: Agent engagement and delegation dynamics
-
-## Understanding Results
-
-### Timeline Data Structure
-
-Each simulation generates timeline data with one row per round:
-
-```csv
-run_id,round,resources_after,chosen_portfolio_idx,mechanism,adversarial_proportion_total,...
-1,0,105.2,2,PLD,0.2,...
-1,1,98.7,1,PLD,0.2,...
-1,2,103.1,0,PLD,0.2,...
-```
-
-### Visualization Types
-
-1. **Individual Trajectories**: Show resource progression for sample simulations
-2. **Aggregated Trajectories**: Compare mechanism performance with confidence intervals
-3. **Distribution Analysis**: Examine round-to-round resource change patterns
-4. **Mechanism Comparison**: Performance across different adversarial conditions
-
-## Core Principles
-
-GraphTransform is built on foundational mathematical and computational principles that provide a rigorous basis for modeling complex multi-agent systems.
-
-### From Category Theory to Code
-
-At its heart, GraphTransform implements category theory concepts directly in code:
-
-- **Morphisms as Pure Functions**: Transformations are morphisms in the category of graph states
-- **Composition as a First-Class Operation**: Sequential and parallel composition of transformations
-- **Invariant Preservation**: Transformations can be characterized by the properties they preserve
-- **Type Safety**: Mathematical properties encoded in the type system
-
-This category-theoretic foundation enables us to reason about transformations mathematically while implementing them computationally.
-
-### Functional Paradigm
-
-The framework embraces functional programming principles:
-
-- **Immutability**: Graph states are immutable, transformations produce new states
-- **Pure Functions**: Transformations have no side effects
-- **Function Composition**: Complex behaviors built from simple composable parts
-- **Higher-Order Functions**: Transformations that operate on other transformations
-- **Referential Transparency**: Identical inputs always produce identical outputs
-
-### The Two-Layer Architecture
-
-GraphTransform separates **what** happens from **how** it happens through a clean two-layer architecture:
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│ Process Layer (Mathematical Definition)                             │
-│                                                                     │
-│  • Graph transformations as typed, composable operations            │
-│  • Mathematical properties encoded and verified                     │
-│  • Algebraic laws governing composition                             │
-│  • Scale-independent, platform-independent definitions              │
-└───────────────────────────────┬─────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│ Execution Layer (Computational Implementation)                      │
-│                                                                     │
-│  • Optimization of computational resources                          │
-│  • Hardware-specific acceleration (JAX)                             │
-│  • Service integration (LLMs, storage)                              │
-│  • Performance monitoring and adaptation                            │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-This separation ensures mathematical rigor while enabling computational efficiency.
-
-## Conceptual Framework
-
-### Bottom-Up vs. Top-Down Processes
-
-The framework distinguishes between two fundamental classes of transformations:
-
-**Bottom-Up Communication**:
-- Agent-to-agent interactions
-- Information generation and exchange
-- Belief updating through local interactions
-- Emergent patterns from local rules
-
-**Top-Down Regularization**:
-- Global coordination mechanisms
-- Constraint enforcement
-- Collective decision-making
-- Resource allocation systems
-
-This distinction mirrors how complex systems in nature operate: local interactions produce emergent behaviors, while global constraints shape the overall system dynamics.
-
-### Graph Monads
-
-The core data structure is the `GraphState`, which functions as a monad in the category-theoretic sense:
-
-- It encapsulates a complete system state
-- It provides operations for transformation
-- It maintains immutability
-- It enables composition of operations
-
-This monad-based approach gives us a mathematically sound way to represent and transform complex system states.
+The democracy code in `environments/democracy/` is just one example application. The core framework lives in `core/`, `engine/`, and `execution/`, and you can use it to build simulations for any domain: epidemics, markets, traffic flow, or anything else involving agents and networks.
 
 ## Installation
 
 ```bash
-pip install graph-transform
+git clone https://github.com/eq-network/Col-Int-Lib.git
+cd Col-Int-Lib
+pip install -r requirements.txt
 ```
 
-## Further Reading
+**Requirements**: Python 3.10+, NumPy, pandas
 
-- [Category Theory for Programmers](https://bartoszmilewski.com/2014/10/28/category-theory-for-programmers-the-preface/)
-- [Functional Programming in Python](https://docs.python.org/3/howto/functional.html)
-- [JAX Documentation](https://jax.readthedocs.io/)
-- [A Process-Centric Multi-Agent Simulation Manifesto](/Manifesto.md)
+## Quick Example
+
+```python
+from core.graph import GraphState
+from core.category import sequential
+import numpy as np
+
+# Define your state
+state = GraphState(
+    node_types=np.zeros(100),
+    node_attrs={"score": np.ones(100)},
+    adj_matrices={"network": np.zeros((100, 100))},
+    global_attrs={"round": 0}
+)
+
+# Write transform functions
+def update_scores(state):
+    new_scores = state.node_attrs["score"] * 1.1
+    return state.update_node_attrs("score", new_scores)
+
+def update_round(state):
+    return state.update_global_attr("round", state.global_attrs["round"] + 1)
+
+# Compose and run
+pipeline = sequential(update_scores, update_round)
+final_state = pipeline(state)
+```
+
+See [Start_Here.md](Start_Here.md) for a complete tutorial.
+
+## Repository Structure
+
+```
+collective-intelligence-library/
+├── core/              # Core framework (GraphState, Transform, Property)
+├── engine/            # Domain-agnostic transformation building blocks
+│   ├── transformations/
+│   │   ├── bottom_up/    # Agent-level transformations
+│   │   └── top_down/     # System-level mechanisms
+│   └── agents/           # Agent implementation patterns
+├── execution/         # Execution strategies and analysis tools
+├── environments/      # Example: Democracy simulations (ignore for new domains)
+└── services/          # Optional: LLM integration, etc.
+```
+
+For your own simulation, you'll primarily work with `core/` (the graph transformation system), `engine/transformations/` (reusable transformation patterns), and `execution/` (running simulations and analyzing results). You can safely ignore `environments/democracy/` unless you're specifically interested in that example, and most of `services/` unless you need LLM integration.
+
+## Core Concepts (5 Minutes)
+
+### 1. GraphState
+
+GraphState is an immutable container for your simulation state. It holds per-agent data in `node_attrs`, network structure in `adj_matrices`, and system-level data in `global_attrs`:
+
+```python
+state = GraphState(
+    node_types=np.array([...]),                   # Node type labels
+    node_attrs={"resources": np.array([...])},    # Per-agent data
+    adj_matrices={"connections": np.array([...])}, # Network structure
+    global_attrs={"round": 0}                       # System-level data
+)
+```
+
+### 2. Transforms
+
+Transforms are pure functions that map from one GraphState to another. They read from the input state, compute new values, and return a new state without ever mutating the original:
+
+```python
+def my_transform(state: GraphState) -> GraphState:
+    # Read from state, compute new values
+    # Return new state (never mutate!)
+    return state.update_node_attrs("score", new_scores)
+```
+
+### 3. Composition
+
+Complex behaviors emerge from chaining simple transforms together. The `sequential` function composes multiple transforms into a pipeline:
+
+```python
+from core.category import sequential
+
+pipeline = sequential(
+    information_spread,
+    belief_update,
+    network_rewiring
+)
+
+final_state = pipeline(initial_state)
+```
+
+That's the entire pattern. Everything else builds on this foundation.
+
+## The Democracy Example
+
+The `environments/democracy/` code demonstrates these concepts through voting simulations, but it's not part of the core framework. It's one example of how to use the library. If you're building your own simulation, you can safely ignore the democracy code and focus on the core framework.
+
+## Philosophy
+
+This framework embraces functional purity, where transformations have no side effects. States are immutable—never modified, only transformed into new states. Complex behaviors emerge through composition of simple parts. Mathematical properties are encoded in the type system, and there's a clean separation between what transformations do mathematically and how they execute computationally.
+
+Read the [Manifesto](Manifesto.md) for the full philosophical and technical argument.
+
+## Documentation
+
+The [Start Here](Start_Here.md) guide walks you through building your first simulation. The [Manifesto](Manifesto.md) explains the conceptual foundations and design principles. You can also view the [Excalidraw Diagrams](https://excalidraw.com/#room=f4116b0ba2d8d5095d85,zSDwGDuqMZI4uxu4CTQuHg) for visual architecture overview.
+
+## Contributing
+
+This is research code that's changing rapidly. If you're interested in building your own domain simulations, improving the core framework, or adding new transformation patterns, please reach out or submit a PR.
 
 ## License
 
-MIT License
+MIT
+
+---
+
+**Remember**: The democracy code is just an example. The framework is for building **any** graph-based multi-agent simulation. Start with [Start_Here.md](Start_Here.md) and build something new.
