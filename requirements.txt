@@ -1,0 +1,19 @@
+# Core dependencies
+numpy>=1.24.0
+pandas>=2.0.0
+jax>=0.4.20
+jaxlib>=0.4.20
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# System monitoring (for parallel execution)
+psutil>=5.9.0
+
+# Optional: LLM integration
+# requests>=2.31.0  # Uncomment if using LLM agents with API calls
+# openai>=1.0.0  # Uncomment if using OpenAI LLM agents
+# anthropic>=0.18.0  # Uncomment if using Anthropic LLM agents
+
+# Note: typing, dataclasses, functools, multiprocessing are part of Python standard library (3.10+)
