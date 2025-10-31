@@ -1,0 +1,20 @@
+{
+  "name": "ci-dashboard",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": { "dev": "vite", "build": "vite build", "preview": "vite preview" },
+  "dependencies": {
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "reactflow": "11.11.4",
+    "vis-data": "^7.1.9",
+    "vis-timeline": "^7.7.2"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.74",
+    "@types/react-dom": "^18.2.24",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.0"
+  }
+}
