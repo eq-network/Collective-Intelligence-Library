@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(python test_farmers_market.py:*)",
+      "Bash(python -m engine.environments.farmers_market.agent_example:*)",
+      "Bash(python -m engine.environments.farmers_market.general_agents_example:*)",
+      "Bash(python -m engine.environments.farmers_market.example:*)",
+      "Bash(python run_farmers_market.py:*)",
+      "Bash(cat:*)",
+      "Bash(python test_matrix_backend.py:*)",
+      "Bash(timeout 5 python:*)",
+      "Bash(python test_graph_helpers.py:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
