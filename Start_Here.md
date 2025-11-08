@@ -10,13 +10,15 @@ What does your simulation track? Define it in `GraphState`:
 
 ```python
 from core.graph import GraphState
+import jax.numpy as jnp
+import jax.random as jr
 
 # Example: Social media influence simulation
 def create_influence_state(num_users: int, seed: int):
     return GraphState(
         node_attrs={
-            "influence_score": jnp.ones(num_users),      # Each user's influence
-            "content_quality": jnp.random.uniform(0, 1, num_users),
+            "influence_score": jnp.ones(num_users),  # Each user's influence
+            "content_quality": jr.uniform(0, 1, num_users),
             "is_verified": jnp.array([False] * num_users)
         },
         adj_matrices={
@@ -101,7 +103,7 @@ influence_pipeline = sequential(
 ### 4. **Initialize & Run** (5 minutes)
 
 ```python
-from execution.simulation import run_simulation
+from execution.worker import run_simulation_task
 import jax.random as jr
 
 # Create initial state
@@ -109,7 +111,7 @@ key = jr.PRNGKey(42)
 initial_state = create_influence_state(num_users=100, seed=42)
 
 # Run simulation
-final_state, history = run_simulation(
+final_state, history = run_simulation_task(
     initial_state=initial_state,
     transform=influence_pipeline,
     num_rounds=20,
@@ -154,7 +156,7 @@ your_simulation/
   state.py          # Step 1: define create_your_state()
   transforms.py     # Step 2: write your transform functions
   pipeline.py       # Step 3: compose with sequential()
-  run.py           # Step 4: run_simulation()
+  run.py            # Step 4: run_simulation()
 ```
 
 **Total code: ~100 lines.**
@@ -174,8 +176,7 @@ your_simulation/
 ### ✅ DO Use These:
 - `/core/graph.py` - `GraphState` class
 - `/core/category.py` - `sequential()`, `compose()`
-- `/execution/simulation.py` - `run_simulation()`
-- `/execution/call.py` - `execute()` (if you need custom execution)
+- `/execution/worker.py` - `run_simulation_task()`
 
 ---
 
@@ -299,30 +300,6 @@ safe_transfer = attach_properties(
 )
 ```
 
-### Add Parallel Execution
-```python
-from execution.call import execute
-
-final_state = execute(
-    transform=your_pipeline,
-    state=initial_state,
-    spec={"strategy": "parallel", "num_workers": 4}
-)
-```
-
-### Add Metrics Collection
-```python
-from execution.instrumentation.metrics import MetricsCollector
-
-final_state, instrumentation = execute_with_instrumentation(
-    transform=your_pipeline,
-    state=initial_state,
-    spec={"collect_metrics": True}
-)
-
-print(instrumentation["metrics"])
-```
-
 ---
 
 ## The Mental Model
@@ -342,7 +319,7 @@ That's it. Everything else is optimization or convenience.
 **The framework's job:**
 - Provide immutable State container (GraphState)
 - Provide composition operators (sequential, compose)
-- Provide execution engine (run_simulation)
+- Provide execution engine (run_simulation_task)
 
 **You don't need**: LLMs, voting, elections, portfolios, predictions, delegations, or any of that. Those are just one example of transforms.
 

@@ -10,7 +10,7 @@ import importlib
 from typing import Dict, Any, Tuple, List
 
 from core.simulation import Simulation
-from services.llm import ProcessIsolatedLLMService
+
 
 def _import_class(class_path: str):
     """Dynamically imports a class from a string path."""
@@ -39,6 +39,9 @@ def run_simulation_task(params: Dict[str, Any]) -> Tuple[pd.DataFrame, Dict[str,
         # 2. Instantiate LLM Service if needed
         llm_service = None
         if params['environment_params'].get('llm_model'):
+            # requests is optional package to install only when using LLMs,
+            # and it cannot be imported if not installed => dynamical import of services.llm
+            from services.llm import ProcessIsolatedLLMService
             llm_service = ProcessIsolatedLLMService(model=params['environment_params']['llm_model'])
 
         # 3. Instantiate Agent Population
