@@ -86,7 +86,7 @@ class MultiMechanismRunner:
     def step(self) -> GraphState:
         st = self.state.update_global_attr("tick", self.timestep)
 
-        metrics_before = self.monitor.compute_metrics(st) if self.monitor else {}
+        # metrics_before = self.monitor.compute_metrics(st) if self.monitor else {}
         st, tick_key = st.split_rng()
         before = self._read_numpy(st)
 
@@ -118,14 +118,14 @@ class MultiMechanismRunner:
             "winner_policy": st.global_attrs.get("policy", None),
         }
 
-        metrics_after = self.monitor.compute_metrics(st) if self.monitor else {}
+        # metrics_after = self.monitor.compute_metrics(st) if self.monitor else {}
 
         self.execution_log.append(
             {
                 "tick": self.timestep,
                 "active_mechanisms": active,
-                "metrics_before": metrics_before,
-                "metrics_after": metrics_after,
+                # "metrics_before": metrics_before,
+                # "metrics_after": metrics_after,
                 "delta_sparse": delta_sparse,
                 "events": events,
             }
