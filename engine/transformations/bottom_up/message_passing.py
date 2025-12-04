@@ -34,27 +34,34 @@ def create_message_passing_transform(
     """
     def transform(state: GraphState) -> GraphState:
         # 1. Setup
-        num_nodes = state.num_nodes
+        active_indices = state.get_active_indices()
+        active_mask = state.get_active_mask()
         adj_matrix = state.adj_matrices.get(connection_type)
         if adj_matrix is None:
             print(f"Warning: Connection type '{connection_type}' not found in adj_matrices. Skipping transform.")
             return state
 
-        # 2. Generate all messages in parallel (conceptually)
-        messages = [message_generator(state, i) for i in range(num_nodes)]
+        # 2. Generate messages (only from active nodes)
+        messages = {}
+        for i in active_indices:
+            i_int = int(i)
+            messages[i_int] = message_generator(state, i_int)
 
-        # 3. Process messages for each node
-        new_node_attrs_updates: List[Dict[str, Any]] = []
-        for i in range(num_nodes):
-            # Find all nodes that send a message to node `i`
-            sender_indices = jnp.where(adj_matrix[:, i] > 0)[0]
-            
-            # Collect incoming messages
-            incoming_messages = [messages[j] for j in sender_indices]
-            
+        # 3. Process messages for each active node
+        new_node_attrs_updates: Dict[int, Dict[str, Any]] = {}
+        for i in active_indices:
+            i_int = int(i)
+
+            # Find active nodes that send a message to node `i`
+            sender_mask = (adj_matrix[:, i] > 0) & active_mask
+            sender_indices = jnp.where(sender_mask)[0]
+
+            # Collect incoming messages from active senders
+            incoming_messages = [messages[int(j)] for j in sender_indices if int(j) in messages]
+
             # Process messages and get the attribute updates for node `i`
-            updates = message_processor(state, i, incoming_messages)
-            new_node_attrs_updates.append(updates)
+            updates = message_processor(state, i_int, incoming_messages)
+            new_node_attrs_updates[i_int] = updates
 
         # 4. Apply all updates to create the new state
         # This approach ensures the transformation remains pure. All reads are from
@@ -62,9 +69,9 @@ def create_message_passing_transform(
         final_node_attrs = state.node_attrs.copy()
         for attr_name in final_node_attrs.keys():
             # Check if any message processor returned an update for this attribute
-            if any(attr_name in updates for updates in new_node_attrs_updates):
+            if any(attr_name in updates for updates in new_node_attrs_updates.values()):
                 new_values = final_node_attrs[attr_name].copy()
-                for i, updates in enumerate(new_node_attrs_updates):
+                for i, updates in new_node_attrs_updates.items():
                     if attr_name in updates:
                         new_values = new_values.at[i].set(updates[attr_name])
                 final_node_attrs[attr_name] = new_values

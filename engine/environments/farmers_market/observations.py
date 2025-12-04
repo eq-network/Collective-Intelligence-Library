@@ -63,8 +63,12 @@ def build_farmer_observation(
     # Get neighbors from trade network
     if "trade_network" in state.adj_matrices:
         trade_network = state.adj_matrices["trade_network"]
-        # Find neighbors (where connection exists)
+        # Find neighbors (where connection exists and node is active)
         neighbor_mask = trade_network[agent_id, :] > 0
+        if state.is_capacity_mode:
+            # Filter to only active neighbors
+            active_mask = state.get_active_mask()
+            neighbor_mask = neighbor_mask & active_mask
         neighbor_ids = jnp.where(neighbor_mask)[0]
         observation["neighbors"] = [int(nid) for nid in neighbor_ids]
 
@@ -98,7 +102,7 @@ def build_all_observations(
     include_global: bool = True
 ) -> List[Dict[str, Any]]:
     """
-    Build observations for all agents in the state.
+    Build observations for all active agents in the state.
 
     Args:
         state: Current graph state
@@ -106,11 +110,11 @@ def build_all_observations(
         include_global: Whether to include global attributes
 
     Returns:
-        List of observation dicts, one per agent
+        List of observation dicts, one per active agent
     """
     return [
-        build_farmer_observation(state, agent_id, include_neighbors, include_global)
-        for agent_id in range(state.num_nodes)
+        build_farmer_observation(state, int(agent_id), include_neighbors, include_global)
+        for agent_id in state.get_active_indices()
     ]
 
 
@@ -138,6 +142,10 @@ def build_limited_observation(
     if observation_radius >= 1 and "trade_network" in state.adj_matrices:
         trade_network = state.adj_matrices["trade_network"]
         neighbor_mask = trade_network[agent_id, :] > 0
+        if state.is_capacity_mode:
+            # Filter to only active neighbors
+            active_mask = state.get_active_mask()
+            neighbor_mask = neighbor_mask & active_mask
         neighbor_ids = jnp.where(neighbor_mask)[0]
         obs["neighbors"] = [int(nid) for nid in neighbor_ids]
 

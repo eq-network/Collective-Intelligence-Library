@@ -104,34 +104,37 @@ def _enhanced_prediction_market_signal_generator(state: GraphState, config: Dict
         uniform_signals = true_expected_yields + noise
         return {"uniform_signals": uniform_signals}
     
-    # Generate agent-specific signals
-    num_agents = state.num_nodes
+    # Generate agent-specific signals for active nodes only
+    active_indices = state.get_active_indices()
+    num_agents = len(active_indices)
     agent_signals = {}
-    
-    for agent_id in range(num_agents):
+
+    for agent_id in active_indices:
+        agent_id_int = int(agent_id)
         # Get agent's cognitive resources
-        is_delegate = state.node_attrs["is_delegate"][agent_id]
+        is_delegate = state.node_attrs["is_delegate"][agent_id_int]
         if is_delegate:
             cognitive_resources = cognitive_config.cognitive_resources_delegate
         else:
             cognitive_resources = cognitive_config.cognitive_resources_voter
-        
+
         # Calculate total noise for this agent
         additional_noise = (100 - cognitive_resources) / 100.0
         total_noise_sigma = base_noise_sigma + additional_noise
-        
+
         # Generate agent-specific key and signals
-        agent_key = jr.split(base_key, num_agents + 1)[agent_id]
+        agent_key = jr.split(base_key, num_agents + 1)[agent_id_int]
         noise = jr.normal(agent_key, shape=true_expected_yields.shape) * total_noise_sigma
         agent_prediction_signals = true_expected_yields + noise
-        
-        agent_signals[agent_id] = agent_prediction_signals
-    
+
+        agent_signals[agent_id_int] = agent_prediction_signals
+
     # Return both agent-specific signals and a consensus signal (from best-informed agent)
     best_agent_id = 0  # Delegate with highest cognitive resources
-    for agent_id in range(num_agents):
-        if state.node_attrs["is_delegate"][agent_id]:
-            best_agent_id = agent_id
+    for agent_id in active_indices:
+        agent_id_int = int(agent_id)
+        if state.node_attrs["is_delegate"][agent_id_int]:
+            best_agent_id = agent_id_int
             break
     
     return {

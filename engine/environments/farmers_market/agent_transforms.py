@@ -44,7 +44,17 @@ def create_history_tracker_transform() -> Transform:
     """Track state in history."""
     def transform(state: GraphState) -> GraphState:
         resources = state.global_attrs.get("resource_types", [])
-        totals = {rt: float(jnp.sum(state.node_attrs[f"resources_{rt}"])) for rt in resources}
+
+        # Sum only active nodes in capacity mode
+        totals = {}
+        for rt in resources:
+            resource_key = f"resources_{rt}"
+            values = state.node_attrs[resource_key]
+            if state.is_capacity_mode:
+                active_mask = state.get_active_mask()
+                totals[rt] = float(jnp.sum(values * active_mask))
+            else:
+                totals[rt] = float(jnp.sum(values))
 
         entry = {
             "round": state.global_attrs.get("round", 0),
@@ -85,23 +95,26 @@ def create_agent_driven_trade_transform(
         - Network topology unchanged
     """
     def transform(state: GraphState) -> GraphState:
-        num_agents = state.num_nodes
+        active_indices = state.get_active_indices()
+        num_agents = len(active_indices)
 
         # Validate agent count
         if len(agent_policies) != num_agents:
             raise ValueError(
                 f"Number of agents ({len(agent_policies)}) doesn't match "
-                f"number of nodes ({num_agents})"
+                f"number of active nodes ({num_agents})"
             )
 
-        # Step 1: Build observations for all agents
+        # Step 1: Build observations for all active agents
         observations = build_all_observations(state)
 
         # Step 2: Query each agent for their action
-        actions = []
-        for agent_id, (obs, policy) in enumerate(zip(observations, agent_policies)):
-            action = policy(obs, agent_id)
-            actions.append(action)
+        # Map: policy index -> (actual node_id, action)
+        actions_by_node = {}
+        for policy_idx, (obs, policy) in enumerate(zip(observations, agent_policies)):
+            actual_node_id = int(active_indices[policy_idx])
+            action = policy(obs, actual_node_id)
+            actions_by_node[actual_node_id] = action
 
         # Step 3: Process trade offers into actual trades
         resource_types = state.global_attrs.get("resource_types", [])
@@ -110,12 +123,16 @@ def create_agent_driven_trade_transform(
         # Build trade pairs from offers
         trades_executed = 0
 
-        for agent_id, action in enumerate(actions):
+        for agent_id in active_indices:
+            agent_id = int(agent_id)
+            action = actions_by_node[agent_id]
             trade_offers = action.get("trade_offers", {})
 
             for partner_id, offer in trade_offers.items():
                 # Check if this is a mutual trade (both offered to each other)
-                partner_action = actions[partner_id]
+                if partner_id not in actions_by_node:
+                    continue  # Partner is not active
+                partner_action = actions_by_node[partner_id]
                 partner_offers = partner_action.get("trade_offers", {})
 
                 # Only execute if it's a valid trade
@@ -190,7 +207,8 @@ def create_agent_driven_consumption_transform(
         A pure transformation function
     """
     def transform(state: GraphState) -> GraphState:
-        num_agents = state.num_nodes
+        active_indices = state.get_active_indices()
+        num_agents = len(active_indices)
 
         if len(agent_policies) != num_agents:
             raise ValueError(f"Agent count mismatch: {len(agent_policies)} vs {num_agents}")
@@ -202,8 +220,9 @@ def create_agent_driven_consumption_transform(
         resource_types = state.global_attrs.get("resource_types", [])
         new_node_attrs = dict(state.node_attrs)
 
-        for agent_id, (obs, policy) in enumerate(zip(observations, agent_policies)):
-            action = policy(obs, agent_id)
+        for policy_idx, (obs, policy) in enumerate(zip(observations, agent_policies)):
+            actual_node_id = int(active_indices[policy_idx])
+            action = policy(obs, actual_node_id)
             consumption_rate = action.get("consumption_rate", 0.05)
 
             # Apply consumption to each resource
@@ -212,13 +231,13 @@ def create_agent_driven_consumption_transform(
 
                 if resource_key in state.node_attrs:
                     current_resources = new_node_attrs[resource_key].copy()
-                    current_amount = current_resources[agent_id]
+                    current_amount = current_resources[actual_node_id]
 
                     # Consume the specified fraction
                     consumed = current_amount * consumption_rate
                     new_amount = max(0.0, current_amount - consumed)
 
-                    current_resources = current_resources.at[agent_id].set(new_amount)
+                    current_resources = current_resources.at[actual_node_id].set(new_amount)
                     new_node_attrs[resource_key] = current_resources
 
         return state.replace(node_attrs=new_node_attrs)

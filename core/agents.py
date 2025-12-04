@@ -1,50 +1,72 @@
 # core/agents.py
 """
-Defines the abstract base class for all agents in the simulation framework.
+Agent Protocol: Core abstraction for node behaviors.
 
-This module establishes the fundamental interface that every agent must implement,
-ensuring that the simulation engine can interact with any agent type in a
-standardized way.
+In Mycorrhiza, an Agent is the fundamental computational unit that processes
+observations and produces actions. Agents are nodes in the graph (type 0).
+
+This is a minimal protocol following the functional paradigm:
+    Observation → Action
+
+Think of agents like pure functions with optional internal state.
+The Agent protocol is used for all node types (Agents, Markets, Democracies)
+through the common interface: observe → decide → act.
 """
-from abc import ABC, abstractmethod
-from typing import Dict, Any, TypeAlias
+from typing import Protocol, Dict, Any, TypeAlias
 
-# For clarity, define a type alias for an Action.
-# An Action is a dictionary specifying the agent's intended changes.
+# Type aliases for clarity
+Observation: TypeAlias = Dict[str, Any]
 Action: TypeAlias = Dict[str, Any]
 
-class Agent(ABC):
-    """
-    Abstract Base Class for a simulation agent.
 
-    Each agent has a unique ID and encapsulates its own internal state and
-    decision-making logic. The core responsibility of an agent is to
-    produce an `Action` when prompted by the environment.
+class Agent(Protocol):
     """
-    def __init__(self, agent_id: int):
-        if not isinstance(agent_id, int) or agent_id < 0:
-            raise ValueError("agent_id must be a non-negative integer.")
-        self.agent_id = agent_id
+    Protocol for agent behavior.
 
-    @abstractmethod
-    def act(self, observation: Dict[str, Any]) -> Action:
+    Agents are pure functions: Observation → Action.
+    They can maintain internal state, but must be callable as functions.
+
+    This protocol is intentionally minimal to enable maximum flexibility:
+    - Function-based agents: just a function
+    - Class-based agents: implement act() method
+    - Stateful agents: can store internal state
+    - Stateless agents: pure functions of observation
+
+    Example (Function-based):
+        def simple_agent(observation: Observation) -> Action:
+            return {"share": observation["resources"] * 0.1}
+
+    Example (Class-based):
+        class MyAgent:
+            def act(self, observation: Observation) -> Action:
+                return {"bid": self.compute_bid(observation)}
+
+    Example (Stateful):
+        class LearningAgent:
+            def __init__(self):
+                self.memory = []
+
+            def act(self, observation: Observation) -> Action:
+                self.memory.append(observation)
+                return self.make_decision()
+
+    Note: Agent ID is NOT part of the protocol. IDs are managed by the
+    graph structure (node index), not by the agent itself.
+    """
+
+    def act(self, observation: Observation) -> Action:
         """
-        The primary decision-making method for the agent.
+        Process observation and produce action.
 
-        Based on the provided observation from the environment, the agent
-        must decide on an action to take.
+        Pure function: Given an observation, decide what action to take.
 
         Args:
-            observation: A dictionary containing all the information the agent
-                         can perceive from the environment in the current state.
-                         This could include market signals, other agents' public
-                         states, collective resource levels, etc.
+            observation: Dictionary containing information the agent perceives.
+                        Structure depends on the scenario (market prices,
+                        neighbor states, resource levels, etc.)
 
         Returns:
-            An Action dictionary specifying the agent's desired action.
-            For example: {'vote_for_portfolio': 3} or {'delegate_to': 5}.
+            Action dictionary specifying the agent's decision.
+            Structure depends on the scenario (bids, votes, messages, etc.)
         """
-        pass
-
-    def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(id={self.agent_id})"
+        ...

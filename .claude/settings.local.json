@@ -10,7 +10,9 @@
       "Bash(cat:*)",
       "Bash(python test_matrix_backend.py:*)",
       "Bash(timeout 5 python:*)",
-      "Bash(python test_graph_helpers.py:*)"
+      "Bash(python test_graph_helpers.py:*)",
+      "Bash(python examples/capacity_demo.py:*)",
+      "Bash(python examples/clean_architecture_demo.py:*)"
     ],
     "deny": [],
     "ask": []

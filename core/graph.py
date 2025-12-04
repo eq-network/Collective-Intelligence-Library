@@ -30,6 +30,11 @@ from typing import Dict, Any, Set, Tuple, Optional, TypeVar, List, Callable
 from functools import partial
 from dataclasses import field
 
+class CapacityExceededError(Exception):
+    """Raised when adding node beyond capacity."""
+    pass
+
+
 @dataclasses.dataclass(frozen=True)
 class GraphState:
     """
@@ -42,21 +47,32 @@ class GraphState:
         node_attrs: {attr_name: [N]} - Diagonal matrices (agent i's local state)
         adj_matrices: {rel_name: [N, N]} - Off-diagonal matrices (i→j messages)
         global_attrs: {key: value} - Environment-level metadata
+        capacity: Optional[int] - Maximum nodes (None = backward compatible dynamic mode)
 
     Matrix Semantics:
         - node_attrs represent diagonal blocks: state[i, i] = agent i's memory
         - adj_matrices represent off-diagonal: state[i, j] = message from i to j
 
+    Capacity Mode (Optional):
+        - When capacity is set, arrays are padded to fixed size
+        - Inactive nodes marked with node_type=-1
+        - O(1) add/remove operations by slot activation
+        - Use get_active_indices() to filter to active nodes
+
     Performance:
         - Separate matrices (one per resource) allows selective updates
         - JAX operations work efficiently on individual matrices
         - Use get_node_state(i) for fast access to all of node i's attributes
+        - Capacity mode enables JIT compilation with fixed shapes
     """
     node_types: jnp.ndarray
 
     node_attrs: Dict[str, jnp.ndarray]
     adj_matrices: Dict[str, jnp.ndarray]
     global_attrs: Dict[str, Any] = field(default_factory=dict)
+
+    # Optional capacity (None = backward compatible dynamic mode)
+    capacity: Optional[int] = None
     
     def __post_init__(self):
         # Ensure global_attrs is initialized
@@ -74,10 +90,31 @@ class GraphState:
     
     @property
     def num_nodes(self) -> int:
-        """Get the number of nodes in the graph."""
-        if not self.node_attrs:
-            return 0
-        return next(iter(self.node_attrs.values())).shape[0]
+        """Get number of ACTIVE nodes."""
+        if self.capacity is None:
+            # Backward compatible: all nodes active
+            if not self.node_attrs:
+                return 0
+            return next(iter(self.node_attrs.values())).shape[0]
+        # Capacity mode: count active nodes
+        return int(jnp.sum(self.node_types != -1))
+
+    @property
+    def is_capacity_mode(self) -> bool:
+        """Check if using fixed-capacity mode."""
+        return self.capacity is not None
+
+    def get_active_indices(self) -> jnp.ndarray:
+        """Get indices of active nodes."""
+        if not self.is_capacity_mode:
+            return jnp.arange(self.num_nodes)
+        return jnp.where(self.node_types != -1)[0]
+
+    def get_active_mask(self) -> jnp.ndarray:
+        """Get boolean mask for active nodes."""
+        if not self.is_capacity_mode:
+            return jnp.ones(self.num_nodes, dtype=bool)
+        return self.node_types != -1
     
     def update_node_attrs(self, attr_name: str, new_values: jnp.ndarray) -> 'GraphState':
         """
@@ -181,3 +218,66 @@ class GraphState:
             new_node_attrs[attr_name] = new_node_attrs[attr_name].at[node_id].set(new_value)
 
         return self.replace(node_attrs=new_node_attrs)
+
+
+def create_padded_state(
+    capacity: int,
+    initial_active: int,
+    node_types_init: Optional[jnp.ndarray] = None,
+    node_attrs_init: Optional[Dict[str, jnp.ndarray]] = None,
+    adj_matrices_init: Optional[Dict[str, jnp.ndarray]] = None,
+    global_attrs: Optional[Dict[str, Any]] = None
+) -> GraphState:
+    """
+    Create GraphState with fixed capacity.
+
+    Args:
+        capacity: Maximum nodes (fixed array size)
+        initial_active: Number of initially active nodes
+        node_types_init: Initial types [initial_active]
+        node_attrs_init: {attr_name: [initial_active]}
+        adj_matrices_init: {rel_name: [initial_active, initial_active]}
+        global_attrs: Global attributes dict
+
+    Returns:
+        GraphState with padded arrays
+
+    Example:
+        >>> state = create_padded_state(
+        ...     capacity=10,
+        ...     initial_active=3,
+        ...     node_attrs_init={"resources": jnp.array([100, 100, 100])},
+        ...     adj_matrices_init={"network": jnp.eye(3)}
+        ... )
+        >>> state.num_nodes  # Returns 3 (active nodes)
+        >>> state.capacity   # Returns 10 (total capacity)
+    """
+    # Validate
+    if initial_active > capacity:
+        raise ValueError(f"initial_active ({initial_active}) exceeds capacity ({capacity})")
+
+    # Pad node_types: [active types..., -1, -1, ...]
+    active_types = node_types_init if node_types_init is not None else jnp.zeros(initial_active, dtype=jnp.int32)
+    inactive_types = jnp.full(capacity - initial_active, -1, dtype=jnp.int32)
+    node_types = jnp.concatenate([active_types, inactive_types])
+
+    # Pad node_attrs: each becomes [capacity] with zeros for inactive
+    node_attrs = {}
+    for attr_name, active_values in (node_attrs_init or {}).items():
+        padding = jnp.zeros(capacity - initial_active, dtype=active_values.dtype)
+        node_attrs[attr_name] = jnp.concatenate([active_values, padding])
+
+    # Pad adj_matrices: each becomes [capacity, capacity]
+    adj_matrices = {}
+    for rel_name, active_matrix in (adj_matrices_init or {}).items():
+        padded = jnp.zeros((capacity, capacity), dtype=active_matrix.dtype)
+        padded = padded.at[:initial_active, :initial_active].set(active_matrix)
+        adj_matrices[rel_name] = padded
+
+    return GraphState(
+        node_types=node_types,
+        node_attrs=node_attrs,
+        adj_matrices=adj_matrices,
+        global_attrs=global_attrs or {},
+        capacity=capacity
+    )

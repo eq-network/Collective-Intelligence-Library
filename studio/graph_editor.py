@@ -2,10 +2,13 @@
 Graph editing operations.
 
 Pure functions for adding/removing nodes and edges from GraphState.
+
+Supports both capacity mode (O(1) operations via slot activation) and
+dynamic mode (O(N²) operations via array resizing).
 """
 import jax.numpy as jnp
 from typing import Dict, Optional
-from core.graph import GraphState
+from core.graph import GraphState, CapacityExceededError
 
 
 def add_node(
@@ -14,7 +17,7 @@ def add_node(
     initial_attrs: Optional[Dict[str, float]] = None
 ) -> GraphState:
     """
-    Add new node to graph.
+    Add node - O(1) in capacity mode, O(N²) in dynamic mode.
 
     Args:
         state: Current graph state
@@ -23,7 +26,39 @@ def add_node(
 
     Returns:
         New GraphState with added node
+
+    Raises:
+        CapacityExceededError: When capacity mode and no inactive slots available
     """
+    if not state.is_capacity_mode:
+        # Dynamic mode: use append/vstack (existing behavior)
+        return _add_node_dynamic(state, node_type, initial_attrs)
+
+    # Capacity mode: activate slot (O(1))
+    inactive_indices = jnp.where(state.node_types == -1)[0]
+
+    if len(inactive_indices) == 0:
+        raise CapacityExceededError(
+            f"Cannot add node: capacity {state.capacity} reached"
+        )
+
+    slot_id = int(inactive_indices[0])
+    new_node_types = state.node_types.at[slot_id].set(node_type)
+
+    new_node_attrs = dict(state.node_attrs)
+    for attr_name, values in state.node_attrs.items():
+        init_val = initial_attrs.get(attr_name, 0.0) if initial_attrs else 0.0
+        new_node_attrs[attr_name] = values.at[slot_id].set(init_val)
+
+    return state.replace(node_types=new_node_types, node_attrs=new_node_attrs)
+
+
+def _add_node_dynamic(
+    state: GraphState,
+    node_type: int,
+    initial_attrs: Optional[Dict[str, float]]
+) -> GraphState:
+    """Dynamic mode implementation (backward compatible)."""
     num_nodes = state.num_nodes
     new_num_nodes = num_nodes + 1
 
@@ -33,13 +68,7 @@ def add_node(
     # Update node attributes
     new_node_attrs = {}
     for attr_name, values in state.node_attrs.items():
-        # Get initial value for this attribute
-        if initial_attrs and attr_name in initial_attrs:
-            init_val = initial_attrs[attr_name]
-        else:
-            init_val = 0.0
-
-        # Append to attribute array
+        init_val = initial_attrs.get(attr_name, 0.0) if initial_attrs else 0.0
         new_node_attrs[attr_name] = jnp.append(values, init_val)
 
     # Update adjacency matrices (expand with zeros)
@@ -60,7 +89,7 @@ def add_node(
 
 def remove_node(state: GraphState, node_id: int) -> GraphState:
     """
-    Remove node from graph.
+    Remove node - O(1) in capacity mode, O(N²) in dynamic mode.
 
     Args:
         state: Current graph state
@@ -68,24 +97,54 @@ def remove_node(state: GraphState, node_id: int) -> GraphState:
 
     Returns:
         New GraphState with node removed
+
+    Raises:
+        ValueError: If node_id is invalid or node already inactive
     """
+    if not state.is_capacity_mode:
+        # Dynamic mode: delete from arrays
+        return _remove_node_dynamic(state, node_id)
+
+    # Capacity mode: mark inactive (O(1))
+    if node_id < 0 or node_id >= state.capacity:
+        raise ValueError(f"Invalid node_id: {node_id}")
+
+    if state.node_types[node_id] == -1:
+        raise ValueError(f"Node {node_id} already inactive")
+
+    new_node_types = state.node_types.at[node_id].set(-1)
+
+    new_node_attrs = {}
+    for attr_name, values in state.node_attrs.items():
+        new_node_attrs[attr_name] = values.at[node_id].set(0.0)
+
+    new_adj_matrices = {}
+    for rel_name, adj in state.adj_matrices.items():
+        new_adj = adj.at[node_id, :].set(0.0)
+        new_adj = new_adj.at[:, node_id].set(0.0)
+        new_adj_matrices[rel_name] = new_adj
+
+    return state.replace(
+        node_types=new_node_types,
+        node_attrs=new_node_attrs,
+        adj_matrices=new_adj_matrices
+    )
+
+
+def _remove_node_dynamic(state: GraphState, node_id: int) -> GraphState:
+    """Dynamic mode implementation (backward compatible)."""
     if node_id < 0 or node_id >= state.num_nodes:
         raise ValueError(f"Invalid node_id: {node_id}")
 
-    # Update node types
     new_node_types = jnp.delete(state.node_types, node_id)
 
-    # Update node attributes
     new_node_attrs = {}
     for attr_name, values in state.node_attrs.items():
         new_node_attrs[attr_name] = jnp.delete(values, node_id)
 
-    # Update adjacency matrices (remove row and column)
     new_adj_matrices = {}
     for rel_name, adj in state.adj_matrices.items():
-        # Remove row
         new_adj = jnp.delete(adj, node_id, axis=0)
-        # Remove column
         new_adj = jnp.delete(new_adj, node_id, axis=1)
         new_adj_matrices[rel_name] = new_adj
 

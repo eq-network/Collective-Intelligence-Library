@@ -30,31 +30,34 @@ def belief_update_transform(
     beliefs = state.node_attrs.get("belief")
     connections = state.adj_matrices.get("communication")
     messages = state.node_attrs.get("message")
-    
+
     if beliefs is None or connections is None or messages is None:
         return state
-    
-    num_nodes = state.num_nodes
+
+    active_indices = state.get_active_indices()
+    active_mask = state.get_active_mask()
     new_beliefs = beliefs.copy()
-    
-    # For each node, collect neighbor messages and update beliefs
-    for i in range(num_nodes):
+
+    # For each active node, collect neighbor messages and update beliefs
+    for i in active_indices:
+        i_int = int(i)
         # Extract current beliefs
-        node_beliefs = {k: v[i] for k, v in beliefs.items()}
-        
-        # Collect neighbor messages
+        node_beliefs = {k: v[i_int] for k, v in beliefs.items()}
+
+        # Collect neighbor messages from active nodes
         neighbor_messages = []
-        for j in range(num_nodes):
-            if connections[j, i] > 0:  # j connected to i
-                neighbor_message = {k: v[j] for k, v in messages.items()}
+        for j in active_indices:
+            j_int = int(j)
+            if connections[j_int, i_int] > 0:  # j connected to i
+                neighbor_message = {k: v[j_int] for k, v in messages.items()}
                 neighbor_messages.append(neighbor_message)
-        
+
         # Apply update function
         updated_beliefs = update_function(node_beliefs, neighbor_messages)
-        
+
         # Update belief state
         for k, v in updated_beliefs.items():
             if k in new_beliefs:
-                new_beliefs[k] = new_beliefs[k].at[i].set(v)
-    
+                new_beliefs[k] = new_beliefs[k].at[i_int].set(v)
+
     return state.update_node_attrs("belief", new_beliefs)

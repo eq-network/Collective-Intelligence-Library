@@ -58,21 +58,96 @@ class Property:
 
 
 class ConservesSum(Property):
-    """Property checking that the sum of a node attribute remains constant."""
-    
-    def __init__(self, attribute_name: str, name: str = None):
-        super().__init__(name or f"ConservesSum({attribute_name})")
+    """
+    Property checking that the sum of a node attribute remains constant.
+
+    This property must be bound to an initial state before it can verify conservation.
+
+    Example:
+        # Create unbound property
+        conservation = ConservesSum("resources")
+
+        # Bind to initial state
+        bound_conservation = conservation.bind(initial_state)
+
+        # Now can check if sum is conserved
+        final_state = transform(initial_state)
+        assert bound_conservation.check(final_state)  # Verifies sum is same
+    """
+
+    def __init__(self, attribute_name: str, reference_sum: float = None, tolerance: float = 1e-5):
+        """
+        Create a ConservesSum property.
+
+        Args:
+            attribute_name: Name of the node attribute to check
+            reference_sum: Reference sum to compare against (None if unbound)
+            tolerance: Tolerance for floating point comparison
+        """
+        super().__init__(f"ConservesSum({attribute_name})")
         self.attribute_name = attribute_name
-    
+        self.reference_sum = reference_sum
+        self.tolerance = tolerance
+
+    def bind(self, initial_state: GraphState) -> 'ConservesSum':
+        """
+        Bind this property to an initial state's sum.
+
+        Args:
+            initial_state: State to use as reference
+
+        Returns:
+            New ConservesSum property bound to initial state's sum
+
+        Raises:
+            ValueError: If attribute doesn't exist in state
+        """
+        if self.attribute_name not in initial_state.node_attrs:
+            raise ValueError(f"Attribute '{self.attribute_name}' not found in state")
+
+        values = initial_state.node_attrs[self.attribute_name]
+
+        # Use active mask in capacity mode, else sum all
+        if initial_state.is_capacity_mode:
+            active_mask = initial_state.get_active_mask()
+            total = float(jnp.sum(values * active_mask))
+        else:
+            total = float(jnp.sum(values))
+
+        return ConservesSum(self.attribute_name, reference_sum=total, tolerance=self.tolerance)
+
     def check(self, state: GraphState) -> bool:
-        """Check if the total sum of the attribute is conserved."""
+        """
+        Check if the total sum is conserved (within tolerance).
+
+        Args:
+            state: State to check
+
+        Returns:
+            True if sum is conserved, False otherwise
+
+        Raises:
+            ValueError: If property is not bound (call bind() first)
+        """
+        if self.reference_sum is None:
+            raise ValueError(
+                f"ConservesSum property for '{self.attribute_name}' is not bound. "
+                f"Call bind(initial_state) before checking."
+            )
+
         if self.attribute_name not in state.node_attrs:
             return False
-        
-        # In a real implementation, we would need to check against a reference state
-        # Here we're just ensuring the attribute exists and has finite values
-        attr = state.node_attrs[self.attribute_name]
-        return bool(jnp.all(jnp.isfinite(attr)))
+
+        values = state.node_attrs[self.attribute_name]
+
+        # Use active mask in capacity mode, else sum all
+        if state.is_capacity_mode:
+            active_mask = state.get_active_mask()
+            current_sum = float(jnp.sum(values * active_mask))
+        else:
+            current_sum = float(jnp.sum(values))
+
+        return bool(jnp.isclose(current_sum, self.reference_sum, rtol=self.tolerance))
 
 
 class ConjunctiveProperty(Property):
