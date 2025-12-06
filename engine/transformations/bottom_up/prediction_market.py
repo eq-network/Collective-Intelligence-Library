@@ -1,4 +1,4 @@
-# transformations/bottom_up/prediction_market.py
+# engine/transformations/bottom_up/prediction_market.py
 """
 Prediction market transformation - a general mechanism for incorporating
 prediction signals into the graph state.
@@ -9,14 +9,6 @@ generator function rather than embedding domain-specific prediction logic.
 import jax.numpy as jnp
 import jax.random as jr
 from typing import Dict, Any, Callable
-
-import sys
-from pathlib import Path
-
-# Get the root directory (MYCORRHIZA)
-root_dir = Path(__file__).resolve().parent.parent.parent
-if str(root_dir) not in sys.path:
-    sys.path.insert(0, str(root_dir))
 
 from core.graph import GraphState
 

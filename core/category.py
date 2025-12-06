@@ -64,8 +64,8 @@ def sequential(*transforms: Transform) -> Transform:
         A single transformation that applies all transforms in sequence
     """
     if not transforms:
-        # Return identity transformation
-        return identity
+        # Return identity transformation (call it to get the actual transform)
+        return identity()
     
     if len(transforms) == 1:
         return transforms[0]

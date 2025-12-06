@@ -1,12 +1,7 @@
-from typing import TypeVar, Generic, Callable, List, Set, Dict, Any
-
-import sys
-from pathlib import Path
-
-# Get the root directory (MYCORRHIZA)
-root_dir = Path(__file__).resolve().parent.parent.parent
-if str(root_dir) not in sys.path:
-    sys.path.insert(0, str(root_dir))
+"""
+Belief update transformation for updating node beliefs based on neighbor information.
+"""
+from typing import Callable, List, Dict, Any
 
 from core.graph import GraphState
 

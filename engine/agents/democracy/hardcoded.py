@@ -1,4 +1,4 @@
-# environments/democracy/agents/hardcoded.py
+# engine/agents/democracy/hardcoded.py
 """
 Defines agent classes with deterministic, hardcoded logic.
 These are useful for baseline testing and creating predictable scenarios.
@@ -6,11 +6,12 @@ These are useful for baseline testing and creating predictable scenarios.
 from typing import Dict, Any, Optional
 import numpy as np
 
-from core.agents import Agent, Action
+from engine.agents.base import StatefulAgent, Action
 # We add Optional[LLMService] to the init signature for interface consistency, even if not used.
-from services.llm import LLMService 
+from services.llm import LLMService
 
-class HardcodedAlignedAgent(Agent):
+
+class HardcodedAlignedAgent(StatefulAgent):
     """
     An agent that is perfectly aligned and acts based on deterministic rules.
     It has access to perfect information and always chooses the highest-yield portfolio.
@@ -32,7 +33,7 @@ class HardcodedAlignedAgent(Agent):
         
         return {"type": "vote", "votes": votes}
 
-class HardcodedAdversarialAgent(Agent):
+class HardcodedAdversarialAgent(StatefulAgent):
     """
     An agent that is perfectly adversarial and acts based on deterministic rules.
     It has access to perfect information and always chooses the lowest-yield portfolio.

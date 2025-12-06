@@ -1,20 +1,11 @@
-# transformations/market.py
+# engine/transformations/top_down/market.py
 """
 Pure market transformation for state-to-state resource exchange.
 """
 import jax.numpy as jnp
 from typing import Callable, Dict, Any, Tuple, List
 
-import sys
-from pathlib import Path
-
-# Get the root directory (MYCORRHIZA)
-root_dir = Path(__file__).resolve().parent.parent.parent
-if str(root_dir) not in sys.path:
-    sys.path.insert(0, str(root_dir))
-
 from core.graph import GraphState
-from core.property import Property, attach_properties
 
 # Type aliases for clarity
 TradePair = Tuple[int, int, float]  # (agent1, agent2, trade_value)

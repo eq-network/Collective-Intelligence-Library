@@ -14,13 +14,15 @@ Features:
 - Hover effects
 - Live toolbar with status updates
 
-This is Phase 1: Core Infrastructure from the EditSession implementation plan.
+Run with: python -m examples.visual_graph_editor
 """
 import sys
 from pathlib import Path
 
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add parent directory to path for imports (when running directly)
+_root = str(Path(__file__).parent.parent)
+if _root not in sys.path:
+    sys.path.insert(0, _root)
 
 import tkinter as tk
 import jax.numpy as jnp
