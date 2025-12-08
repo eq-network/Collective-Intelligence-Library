@@ -2,6 +2,14 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Session Continuity
+
+**IMPORTANT:** Before starting work, check these files for context from previous sessions:
+- `.claude/CURRENT_PLAN.md` - Active plans and next steps
+- `.claude/SESSION_LOG.md` - History of decisions and progress
+
+At the end of a session, offer to update these files with current progress.
+
 ## What This Is
 
 **Mycorrhiza** is a programming language for collective intelligence. Not a simulation framework, not a multi-agent library—a language where the fundamental unit of computation is a **transformation on graphs**.

@@ -47,9 +47,23 @@ class EditToolbar:
 
         # Add Node tool
         self.tool_buttons[Tool.ADD_NODE] = self._create_tool_button(
-            "Add Node (N)",
+            "Add Agent (N)",
             Tool.ADD_NODE,
-            "Click empty space to create node"
+            "Click empty space to create agent node"
+        )
+
+        # Add Market tool
+        self.tool_buttons[Tool.ADD_MARKET] = self._create_tool_button(
+            "Add Market (M)",
+            Tool.ADD_MARKET,
+            "Click to add market mechanism"
+        )
+
+        # Add Resource tool
+        self.tool_buttons[Tool.ADD_RESOURCE] = self._create_tool_button(
+            "Add Resource (R)",
+            Tool.ADD_RESOURCE,
+            "Click to add resource depot"
         )
 
         # Add Edge tool

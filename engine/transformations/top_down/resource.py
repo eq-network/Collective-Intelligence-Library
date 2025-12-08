@@ -1,16 +1,9 @@
+# engine/transformations/top_down/resource.py
 """
 Resource application transformation for applying collective decisions.
 """
 import jax.numpy as jnp
 from typing import Dict, Any, Callable
-
-import sys
-from pathlib import Path
-
-# Get the root directory (MYCORRHIZA)
-root_dir = Path(__file__).resolve().parent.parent.parent
-if str(root_dir) not in sys.path:
-    sys.path.insert(0, str(root_dir))
 
 from core.graph import GraphState
 

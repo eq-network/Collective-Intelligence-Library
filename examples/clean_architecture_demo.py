@@ -11,12 +11,16 @@ Key principles:
 - No mutable state
 - Pure functions throughout
 - Simple, composable abstractions
+
+Run with: python -m examples.clean_architecture_demo
 """
 import sys
 from pathlib import Path
 
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add parent directory to path for imports (when running directly)
+_root = str(Path(__file__).parent.parent)
+if _root not in sys.path:
+    sys.path.insert(0, _root)
 
 import jax.numpy as jnp
 from core.graph import GraphState

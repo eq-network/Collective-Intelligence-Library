@@ -12,7 +12,15 @@
       "Bash(timeout 5 python:*)",
       "Bash(python test_graph_helpers.py:*)",
       "Bash(python examples/capacity_demo.py:*)",
-      "Bash(python examples/clean_architecture_demo.py:*)"
+      "Bash(python examples/clean_architecture_demo.py:*)",
+      "Bash(python -m studio.main:*)",
+      "Bash(pip install:*)",
+      "Bash(timeout 10 python:*)",
+      "Bash(python:*)",
+      "Bash(timeout 3 python:*)",
+      "Bash(dir:*)",
+      "Bash(tree:*)",
+      "Bash(find:*)"
     ],
     "deny": [],
     "ask": []

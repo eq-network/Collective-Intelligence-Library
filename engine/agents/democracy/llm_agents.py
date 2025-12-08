@@ -1,14 +1,14 @@
-# Mycorrhiza\engine\agents\llm_agents.py
+# engine/agents/democracy/llm_agents.py
 """
 Defines agent classes that use Large Language Models for decision-making.
 
 Each class encapsulates its own unique prompting strategy, defining its
 cognitive architecture and behavioral tendencies.
 """
-from typing import Dict, Any # Optional, Literal removed as not used in this snippet
-from core.agents import Agent, Action
-from services.llm import LLMService # Assuming a base LLM service
-import numpy as np # Added numpy import
+from typing import Dict, Any
+from engine.agents.base import StatefulAgent, Action
+from services.llm import LLMService
+import numpy as np
 
 # --- New Prompt Templates ---
 RED_TEAM_CONTEXT_GENERAL = """
@@ -85,8 +85,10 @@ PLD_INSTRUCTIONS = (
 )
 
 DEFAULT_VOTE_INSTRUCTIONS = "DECISION FORMAT: Respond with 'ACTION: VOTE, VOTES: [list_of_0s_or_1s]'."
+
+
 # --- Base LLM Agent ---
-class LLMAgent(Agent):
+class LLMAgent(StatefulAgent):
     """
     An abstract base class for agents that use an LLM to make decisions.
     It handles the interaction with the LLM service.

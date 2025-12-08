@@ -23,8 +23,18 @@ class Tool(Enum):
     """Available editing tools."""
     SELECT = "select"
     ADD_NODE = "add_node"
+    ADD_MARKET = "add_market"
+    ADD_RESOURCE = "add_resource"
     ADD_EDGE = "add_edge"
     DELETE = "delete"
+
+
+class NodeType:
+    """Node type constants for visualization and behavior."""
+    AGENT = 0           # Regular agent (circle, blue)
+    ADVERSARIAL = 1     # Adversarial agent (circle, red)
+    MARKET = 2          # Market mechanism (square, orange)
+    RESOURCE = 3        # Resource depot (diamond, green)
 
 
 class EditMode:
@@ -101,7 +111,11 @@ class EditMode:
         if self.active_tool == Tool.SELECT:
             self._handle_select_click(clicked_node, x, y)
         elif self.active_tool == Tool.ADD_NODE:
-            self._handle_add_node_click(clicked_node, x, y)
+            self._handle_add_node_click(clicked_node, x, y, NodeType.AGENT)
+        elif self.active_tool == Tool.ADD_MARKET:
+            self._handle_add_node_click(clicked_node, x, y, NodeType.MARKET)
+        elif self.active_tool == Tool.ADD_RESOURCE:
+            self._handle_add_node_click(clicked_node, x, y, NodeType.RESOURCE)
         elif self.active_tool == Tool.ADD_EDGE:
             self._handle_add_edge_click(clicked_node)
         elif self.active_tool == Tool.DELETE:
@@ -197,6 +211,10 @@ class EditMode:
             self.set_tool(Tool.SELECT)
         elif key == 'n':
             self.set_tool(Tool.ADD_NODE)
+        elif key == 'm':
+            self.set_tool(Tool.ADD_MARKET)
+        elif key == 'r':
+            self.set_tool(Tool.ADD_RESOURCE)
         elif key == 'e':
             self.set_tool(Tool.ADD_EDGE)
         elif key == 'd':
@@ -212,14 +230,31 @@ class EditMode:
         else:
             self.session.deselect_all()
 
-    def _handle_add_node_click(self, node_id: Optional[int], x: float, y: float) -> None:
-        """Handle click in add node mode."""
+    def _handle_add_node_click(
+        self,
+        node_id: Optional[int],
+        x: float,
+        y: float,
+        node_type: int = 0
+    ) -> None:
+        """Handle click in add node/market/resource mode."""
         if node_id is None:  # Only create if clicking empty space
+            # Set default attributes based on node type
+            if node_type == NodeType.MARKET:
+                attrs = {"capacity": 1000.0, "price": 1.0}
+                label = "market"
+            elif node_type == NodeType.RESOURCE:
+                attrs = {"resources": 500.0, "growth_rate": 1.1}
+                label = "resource"
+            else:
+                attrs = self.default_node_attrs.copy()
+                label = "node"
+
             def create_node(state: GraphState) -> GraphState:
                 new_state = add_node(
                     state,
-                    node_type=self.default_node_type,
-                    initial_attrs=self.default_node_attrs
+                    node_type=node_type,
+                    initial_attrs=attrs
                 )
                 # Store position in metadata
                 # Find the newly added node ID (last active node)
@@ -229,7 +264,7 @@ class EditMode:
                     self.session.set_node_position(new_node_id, x, y)
                 return new_state
 
-            self.session.apply_edit(create_node, f"Add node at ({x:.2f}, {y:.2f})")
+            self.session.apply_edit(create_node, f"Add {label} at ({x:.2f}, {y:.2f})")
 
     def _handle_add_edge_click(self, node_id: Optional[int]) -> None:
         """Handle click in add edge mode."""
