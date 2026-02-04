@@ -8,3 +8,4 @@ __pycache__
 results/
 experiment_outputs/
 simulation_results/
+.pyc

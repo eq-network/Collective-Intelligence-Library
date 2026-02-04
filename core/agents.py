@@ -1,50 +1,75 @@
-# core/agents.py
 """
-Defines the abstract base class for all agents in the simulation framework.
-
-This module establishes the fundamental interface that every agent must implement,
-ensuring that the simulation engine can interact with any agent type in a
-standardized way.
+Agent interface: observation → action on GraphState.
 """
-from abc import ABC, abstractmethod
-from typing import Dict, Any, TypeAlias
+from typing import Protocol, TypeAlias
+import jax.numpy as jnp
+from jax import random
 
-# For clarity, define a type alias for an Action.
-# An Action is a dictionary specifying the agent's intended changes.
-Action: TypeAlias = Dict[str, Any]
+from .graph import GraphState
 
-class Agent(ABC):
+ObservationMatrix: TypeAlias = jnp.ndarray
+ActionMatrix: TypeAlias = jnp.ndarray
+
+
+class Policy(Protocol):
+    """Policy: observation matrix → action matrix."""
+    def __call__(self, obs: ObservationMatrix, key: random.PRNGKey) -> ActionMatrix:
+        ...
+
+
+def get_observation(state: GraphState, agent_id: int) -> ObservationMatrix:
     """
-    Abstract Base Class for a simulation agent.
+    Extract observation matrix for agent from GraphState.
 
-    Each agent has a unique ID and encapsulates its own internal state and
-    decision-making logic. The core responsibility of an agent is to
-    produce an `Action` when prompted by the environment.
+    Samples from: node attributes + adjacency + edge attributes.
     """
-    def __init__(self, agent_id: int):
-        if not isinstance(agent_id, int) or agent_id < 0:
-            raise ValueError("agent_id must be a non-negative integer.")
-        self.agent_id = agent_id
+    n_agents = len(state.node_types)
 
-    @abstractmethod
-    def act(self, observation: Dict[str, Any]) -> Action:
-        """
-        The primary decision-making method for the agent.
+    if state.adj_matrices:
+        adjacency = list(state.adj_matrices.values())[0][agent_id]
+    else:
+        adjacency = jnp.ones(n_agents).at[agent_id].set(0)
 
-        Based on the provided observation from the environment, the agent
-        must decide on an action to take.
+    my_attrs = jnp.concatenate([
+        jnp.atleast_1d(attr[agent_id]).flatten()
+        for attr in state.node_attrs.values()
+    ])
 
-        Args:
-            observation: A dictionary containing all the information the agent
-                         can perceive from the environment in the current state.
-                         This could include market signals, other agents' public
-                         states, collective resource levels, etc.
+    neighbor_attrs = jnp.concatenate([
+        attr.flatten() for attr in state.node_attrs.values()
+    ])
 
-        Returns:
-            An Action dictionary specifying the agent's desired action.
-            For example: {'vote_for_portfolio': 3} or {'delegate_to': 5}.
-        """
-        pass
+    if state.edge_attrs:
+        edge_data = jnp.concatenate([
+            attr[agent_id].flatten() if attr.ndim > 1 else jnp.array([attr[agent_id]])
+            for attr in state.edge_attrs.values()
+        ])
+    else:
+        edge_data = jnp.array([])
 
-    def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(id={self.agent_id})"
+    return jnp.concatenate([my_attrs, neighbor_attrs, edge_data, adjacency])
+
+
+def apply_action(state: GraphState, agent_id: int, action: ActionMatrix) -> GraphState:
+    """
+    Apply agent action to GraphState.
+
+    Action updates edge attributes (messages sent).
+    """
+    n_agents = len(state.node_types)
+    n_resources = state.node_attrs["resources"].shape[1]
+
+    transfers = action.reshape(n_agents, n_resources)
+
+    new_resources = state.node_attrs["resources"]
+    new_resources = new_resources.at[agent_id].add(-jnp.sum(transfers, axis=0))
+    new_resources = new_resources.at[:].add(transfers)
+    new_resources = jnp.maximum(new_resources, 0.0)
+
+    new_state = state.update_node_attrs("resources", new_resources)
+
+    if "messages" in state.edge_attrs:
+        new_messages = state.edge_attrs["messages"].at[agent_id].set(transfers)
+        new_state = new_state.update_edge_attrs("messages", new_messages)
+
+    return new_state
