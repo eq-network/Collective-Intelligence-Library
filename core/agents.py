@@ -1,7 +1,7 @@
 """
 Agent interface: observation → action on GraphState.
 """
-from typing import Protocol, TypeAlias
+from typing import Protocol, TypeAlias, Dict, Any, Optional
 import jax.numpy as jnp
 from jax import random
 
@@ -9,12 +9,27 @@ from .graph import GraphState
 
 ObservationMatrix: TypeAlias = jnp.ndarray
 ActionMatrix: TypeAlias = jnp.ndarray
+Action = Dict[str, Any]
 
 
 class Policy(Protocol):
     """Policy: observation matrix → action matrix."""
     def __call__(self, obs: ObservationMatrix, key: random.PRNGKey) -> ActionMatrix:
         ...
+
+
+class Agent:
+    """Thin wrapper: ID + optional policy. State lives in GraphState, not here."""
+    def __init__(self, agent_id: int, policy: Optional['Policy'] = None):
+        self.agent_id = agent_id
+        self.policy = policy
+
+    def act(self, observation: Dict[str, Any]) -> Action:
+        if self.policy is None:
+            return {}
+        key = observation.get("key", random.PRNGKey(self.agent_id))
+        obs_matrix = observation.get("obs", jnp.array([]))
+        return {"action": self.policy(obs_matrix, key)}
 
 
 def get_observation(state: GraphState, agent_id: int) -> ObservationMatrix:

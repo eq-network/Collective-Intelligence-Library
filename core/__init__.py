@@ -13,7 +13,8 @@ from .graph import GraphState
 from .category import Transform, compose, sequential, identity, jit_transform, attach_properties
 from .property import Property, ConservesSum
 from .initialization import initialize_graph_state
-from .agents import Policy, get_observation, apply_action
+from .agents import Policy, Agent, Action, get_observation, apply_action
+from .environment import Environment
 
 __all__ = [
     # Graph state
@@ -36,6 +37,11 @@ __all__ = [
 
     # Agents
     'Policy',
+    'Agent',
+    'Action',
     'get_observation',
     'apply_action',
+
+    # Environment
+    'Environment',
 ]
