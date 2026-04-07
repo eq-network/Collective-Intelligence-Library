@@ -2,7 +2,23 @@
   "permissions": {
     "allow": [
       "Bash(python:*)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(find:*)",
+      "Bash(curl:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(pipx install:*)",
+      "Bash(pip install:*)",
+      "Bash(token-audit-server:*)",
+      "Bash(npx ccusage@latest --help:*)",
+      "Bash(npx ccusage@latest:*)",
+      "WebFetch(domain:research.rug.nl)",
+      "Skill(forest-walk)",
+      "Bash(ls:*)",
+      "WebFetch(domain:arxiv.org)",
+      "Read(//c/Users/Jonas/AppData/Local/Temp/claude/C--GitHub-Mycorrhiza/tasks/**)",
+      "Bash(pip show:*)",
+      "WebFetch(domain:miguelemos.co)",
+      "WebFetch(domain:blog.block.science)"
     ]
   }
 }
