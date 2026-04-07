@@ -60,10 +60,10 @@ def run_sweep(
                     n_adversarial=n_adversarial,
                     seed=rep_seed,
                 )
-                history = env.run(200)
+                final_state = env.run(200)
 
-                survival_time = len(history)
-                final_resource = float(env.state.global_attrs["resource_level"])
+                survival_time = int(final_state.global_attrs["step"])
+                final_resource = float(final_state.global_attrs["resource_level"])
                 survival_times.append(survival_time)
                 final_resources.append(final_resource)
 

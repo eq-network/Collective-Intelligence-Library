@@ -211,8 +211,9 @@ def resource_update_transform(state: GraphState) -> GraphState:
     """Multiplicative resource dynamics: R(t+1) = R(t) * u_{k*}.
 
     The selected proposal's true utility multiplies the resource level.
-    Collapse occurs if R < collapse_threshold (checked in environment).
+    Gated by alive flag — if collapsed, resource freezes at last value.
     """
+    alive = state.global_attrs["alive"]
     proposals = state.global_attrs["proposals"]  # (K,)
     selected = state.global_attrs["selected_proposal"]
     resource = state.global_attrs["resource_level"]
@@ -220,8 +221,16 @@ def resource_update_transform(state: GraphState) -> GraphState:
     multiplier = proposals[selected]
     new_resource = resource * multiplier
 
+    # Check collapse
+    threshold = state.global_attrs["collapse_threshold"]
+    new_alive = alive * (new_resource >= threshold).astype(jnp.float32)
+
+    # If dead, freeze resource at last value
+    new_resource = jnp.where(new_alive > 0.5, new_resource, resource)
+
     new_global = dict(state.global_attrs)
     new_global["resource_level"] = new_resource
+    new_global["alive"] = new_alive
     return state.replace(global_attrs=new_global)
 
 
@@ -380,14 +389,20 @@ def step_counter_transform(state: GraphState) -> GraphState:
 
 # --- Composition --------------------------------------------------------------
 
-def make_step_transform(mechanism: str = "pdd") -> Transform:
+def make_step_transform(mechanism: str = "pdd", metrics: dict = None) -> Transform:
     """Compose the full step pipeline for a given mechanism.
 
     Pipeline:
         proposal_gen -> voting -> aggregation -> resource_update ->
-        reward -> q_learning -> trust_update -> election -> step_counter
+        reward -> q_learning -> trust_update -> election -> step_counter -> [metrics]
+
+    Args:
+        mechanism: one of "pdd", "prd", "pld"
+        metrics: optional dict of {name: GraphState -> scalar} metric functions.
+            If provided, a metrics transform is appended to the pipeline that
+            writes values into pre-allocated metric arrays in global_attrs.
     """
-    return sequential(
+    transforms = [
         proposal_generation_transform,
         make_voting_transform(mechanism),
         make_aggregation_transform(mechanism),
@@ -396,5 +411,14 @@ def make_step_transform(mechanism: str = "pdd") -> Transform:
         make_q_learning_transform(mechanism),
         trust_update_transform,
         make_election_transform(mechanism),
-        step_counter_transform,
-    )
+    ]
+
+    # Metrics transform goes BEFORE step_counter so it writes at the
+    # current step index (0, 1, 2, ...) before the counter increments.
+    if metrics:
+        from metrics.transform import make_metrics_transform
+        transforms.append(make_metrics_transform(metrics))
+
+    transforms.append(step_counter_transform)
+
+    return sequential(*transforms)

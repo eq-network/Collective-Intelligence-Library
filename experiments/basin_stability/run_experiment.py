@@ -6,44 +6,40 @@ Sweeps across:
 - 7 adversarial fractions (0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6)
 - 500 seeds per condition
 
-Measures basin stability: fraction of seeds where the system remains
-above cooperative resource levels during the evaluation window.
-
-Includes baselines: random, oracle, heuristic agents.
+Uses inline metric arrays filled via lax.scan for JIT-compiled execution.
+Outputs CSV files for analysis and plotting.
 
 Usage:
-    python -m experiments.basin_stability.run_experiment
-    python -m experiments.basin_stability.run_experiment --n_seeds 10  # quick test
+    python -m experiments.basin_stability.run_experiment --quick
+    python -m experiments.basin_stability.run_experiment --n_seeds 500
+    python -m experiments.basin_stability.run_experiment --n_seeds 500 --plot
 """
 import sys
 import os
-import json
 import math
 import argparse
+import numpy as np
 from pathlib import Path
 from datetime import datetime
 
+import jax
 import jax.numpy as jnp
+import jax.random as jr
 
 # Ensure project root is on path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from experiments.basin_stability.environment import BasinStabilityEnv
+from experiments.basin_stability.environment import BasinStabilityEnv, run_batched
+from metrics import ECONOMIC_METRICS, GOVERNANCE_METRICS
+from metrics.export import write_trajectory_csv, write_summary_csv, extract_metric_arrays
+
+
+# Default metrics for this experiment: economic + governance
+BASIN_METRICS = {**ECONOMIC_METRICS, **GOVERNANCE_METRICS}
 
 
 def wilson_ci(successes, total, z=1.96):
-    """Wilson score confidence interval for a binomial proportion.
-
-    More accurate than normal approximation for small n or extreme p.
-
-    Args:
-        successes: number of successes
-        total: total trials
-        z: z-score (1.96 for 95% CI)
-
-    Returns:
-        (lower, upper) bounds
-    """
+    """Wilson score confidence interval for a binomial proportion."""
     if total == 0:
         return (0.0, 1.0)
     p_hat = successes / total
@@ -53,74 +49,41 @@ def wilson_ci(successes, total, z=1.96):
     return (max(0.0, center - spread), min(1.0, center + spread))
 
 
-def run_single(mechanism, n_agents, n_adversarial, seed, T=200, **kwargs):
-    """Run a single episode. Returns the full resource trajectory."""
+def run_single(mechanism, n_agents, n_adversarial, seed, T=200,
+               metrics=None, **kwargs):
+    """Run a single episode via env.run_scan(). Returns final GraphState with filled metric arrays."""
+    if metrics is None:
+        metrics = BASIN_METRICS
+
     env = BasinStabilityEnv(
         mechanism=mechanism,
         n_agents=n_agents,
         n_adversarial=n_adversarial,
         seed=seed,
         T=T,
+        metrics=metrics,
         **kwargs,
     )
-    history = env.run(T)
-
-    # Extract resource trajectory
-    trajectory = [float(env._initial_state.global_attrs["resource_level"])]
-    for state in history:
-        trajectory.append(float(state.global_attrs["resource_level"]))
-
-    return trajectory
+    return env.run(T)
 
 
-def compute_basin_stability(trajectories, R_coop, eval_start=150):
-    """Compute basin stability from a set of trajectories.
-
-    Basin stability = fraction of seeds where mean eval-window resources
-    exceed the cooperative baseline R_coop.
+def compute_basin_stability(final_states, metric_name="resource_level", eval_frac=0.75):
+    """Compute per-seed eval-window means from final states with filled metric arrays.
 
     Args:
-        trajectories: list of resource trajectories (list of lists)
-        R_coop: cooperative baseline resource level
-        eval_start: start of evaluation window
+        final_states: list of final GraphStates with filled metric arrays
+        metric_name: which metric to evaluate
+        eval_frac: fraction of timesteps to use as eval window start (default 0.75 = last 25%)
 
     Returns:
-        (basin_stability, wilson_lower, wilson_upper, n_stable, n_total)
+        list of mean metric values in the eval window, one per seed
     """
-    n_stable = 0
-    n_total = len(trajectories)
-
-    for traj in trajectories:
-        if len(traj) > eval_start:
-            eval_resources = traj[eval_start:]
-            mean_eval = sum(eval_resources) / len(eval_resources)
-            if mean_eval > R_coop:
-                n_stable += 1
-
-    bs = n_stable / n_total if n_total > 0 else 0.0
-    ci_low, ci_high = wilson_ci(n_stable, n_total)
-    return bs, ci_low, ci_high, n_stable, n_total
-
-
-def compute_cooperative_baseline(mechanism, n_agents, n_seeds=50, T=200):
-    """Estimate R_coop: mean eval-window resource with 0 adversaries.
-
-    Uses a smaller number of seeds for efficiency.
-    """
-    trajectories = []
-    for seed in range(n_seeds):
-        traj = run_single(mechanism, n_agents, 0, seed=seed * 7919, T=T)
-        trajectories.append(traj)
-
-    # Mean resource in eval window across all cooperative runs
-    eval_resources = []
-    for traj in trajectories:
-        if len(traj) > 150:
-            eval_resources.extend(traj[150:])
-
-    if not eval_resources:
-        return 100.0  # fallback to initial
-    return sum(eval_resources) / len(eval_resources)
+    eval_values = []
+    for state in final_states:
+        arr = np.array(state.global_attrs[f"metric_{metric_name}"])
+        eval_start = int(len(arr) * eval_frac)
+        eval_values.append(float(np.mean(arr[eval_start:])))
+    return eval_values
 
 
 def run_sweep(
@@ -129,13 +92,27 @@ def run_sweep(
     n_agents: int = 20,
     n_seeds: int = 500,
     T: int = 200,
-    seed_offset: int = 0,
+    output_dir: str = None,
+    metrics: dict = None,
 ):
-    """Run the full experimental sweep.
+    """Run the full experimental sweep with CSV output.
 
-    Returns:
-        results: nested dict with basin stability and trajectories
+    Streams trajectory CSV rows as each seed completes.
+    Writes summary CSV after all seeds per condition.
     """
+    if metrics is None:
+        metrics = BASIN_METRICS
+    metric_names = sorted(metrics.keys())
+
+    if output_dir is None:
+        output_dir = Path(__file__).parent / "results"
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    traj_path = output_dir / f"trajectory_{timestamp}.csv"
+    summ_path = output_dir / f"summary_{timestamp}.csv"
+
     results = {}
 
     for mechanism in mechanisms:
@@ -143,39 +120,69 @@ def run_sweep(
         print(f"Mechanism: {mechanism.upper()}")
         print(f"{'='*50}")
 
-        # Compute cooperative baseline for this mechanism
-        print(f"  Computing cooperative baseline (R_coop)...")
-        R_coop = compute_cooperative_baseline(mechanism, n_agents, n_seeds=min(50, n_seeds))
+        # Compute cooperative baseline (0 adversaries)
+        print("  Computing cooperative baseline (R_coop)...")
+        n_baseline = min(50, n_seeds)
+        baseline_evals = []
+        for s in range(n_baseline):
+            final = run_single(mechanism, n_agents, 0, seed=s * 7919, T=T, metrics=metrics)
+            arr = np.array(final.global_attrs["metric_resource_level"])
+            eval_start = int(len(arr) * 0.75)
+            baseline_evals.append(float(np.mean(arr[eval_start:])))
+        R_coop = np.mean(baseline_evals)
         print(f"  R_coop = {R_coop:.2f}")
 
-        results[mechanism] = {"R_coop": R_coop}
+        results[mechanism] = {"R_coop": float(R_coop)}
 
         for adv_frac in adversarial_fractions:
             n_adversarial = int(n_agents * adv_frac)
 
-            trajectories = []
+            final_states = []
             for seed_idx in range(n_seeds):
-                seed = seed_offset + seed_idx * 7919 + hash(mechanism) % 10000
-                traj = run_single(mechanism, n_agents, n_adversarial, seed=seed, T=T)
-                trajectories.append(traj)
+                seed = seed_idx * 7919 + hash(mechanism) % 10000
 
+                final = run_single(
+                    mechanism, n_agents, n_adversarial,
+                    seed=seed, T=T, metrics=metrics,
+                )
+                final_states.append(final)
+
+                # Stream trajectory CSV
+                run_meta = {
+                    "adversarial_fraction": adv_frac,
+                    "mechanism": mechanism,
+                    "seed": seed,
+                }
+                write_trajectory_csv(traj_path, final, metric_names, run_meta)
+
+                # Progress
                 if (seed_idx + 1) % max(1, n_seeds // 5) == 0:
-                    # Progress update
-                    bs_so_far, _, _, n_s, n_t = compute_basin_stability(
-                        trajectories, R_coop
-                    )
+                    evals = compute_basin_stability(final_states)
+                    n_stable = sum(1 for v in evals if v > R_coop)
+                    bs = n_stable / len(evals)
                     print(
                         f"  adv={adv_frac:.0%} | {seed_idx+1}/{n_seeds} | "
-                        f"BS={bs_so_far:.3f} ({n_s}/{n_t})"
+                        f"BS={bs:.3f} ({n_stable}/{len(evals)})"
                     )
 
-            bs, ci_low, ci_high, n_stable, n_total = compute_basin_stability(
-                trajectories, R_coop
-            )
+            # Compute basin stability for this condition
+            eval_means = compute_basin_stability(final_states)
+            n_stable = sum(1 for v in eval_means if v > R_coop)
+            n_total = len(eval_means)
+            bs = n_stable / n_total
+            ci_low, ci_high = wilson_ci(n_stable, n_total)
 
-            # Summary statistics for trajectories
-            final_resources = [traj[-1] for traj in trajectories]
-            survival_times = [len(traj) for traj in trajectories]
+            # Write summary CSV row
+            extra_cols = {
+                "basin_stability": bs,
+                "bs_ci_lower": ci_low,
+                "bs_ci_upper": ci_high,
+            }
+            condition_meta = {
+                "adversarial_fraction": adv_frac,
+                "mechanism": mechanism,
+            }
+            write_summary_csv(summ_path, condition_meta, final_states, metric_names, extra_cols)
 
             results[mechanism][str(adv_frac)] = {
                 "basin_stability": bs,
@@ -183,8 +190,6 @@ def run_sweep(
                 "ci_upper": ci_high,
                 "n_stable": n_stable,
                 "n_total": n_total,
-                "mean_final_resource": sum(final_resources) / len(final_resources),
-                "mean_survival": sum(survival_times) / len(survival_times),
             }
 
             print(
@@ -192,112 +197,156 @@ def run_sweep(
                 f"[{ci_low:.3f}, {ci_high:.3f}]"
             )
 
-    return results
+    print(f"\nTrajectory CSV: {traj_path}")
+    print(f"Summary CSV:    {summ_path}")
+    return results, traj_path, summ_path
 
 
-def run_baselines(
+def run_sweep_vmap(
     mechanisms=("pdd", "prd", "pld"),
     adversarial_fractions=(0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6),
     n_agents: int = 20,
     n_seeds: int = 500,
+    T: int = 200,
+    output_dir: str = None,
+    metrics: dict = None,
+    master_seed: int = 0,
 ):
-    """Run baseline agents: random, oracle, heuristic.
+    """Run the full sweep with vmap over seeds — one GPU kernel per condition.
 
-    These use the same environment but override agent behavior:
-    - Random: uniform action selection (epsilon=1.0 always)
-    - Oracle: always select best proposal (epsilon=0.0, perfect signals)
-    - Heuristic: vote for highest signal (no learning)
-
-    For simplicity, baselines are implemented by manipulating epsilon
-    and signal quality at initialization.
+    Same output format as run_sweep (CSV files), but all seeds for a given
+    (mechanism, adversarial_fraction) are batched into a single vmap call.
     """
-    baseline_results = {}
+    if metrics is None:
+        metrics = BASIN_METRICS
+    metric_names = sorted(metrics.keys())
 
-    # Random baseline: epsilon=1.0 throughout (pure exploration)
-    print("\n--- Random Baseline ---")
-    for mechanism in mechanisms:
-        R_coop = 100.0  # use initial resource as baseline for random
-        for adv_frac in adversarial_fractions:
-            n_adversarial = int(n_agents * adv_frac)
-            trajectories = []
-            for seed_idx in range(n_seeds):
-                seed = seed_idx * 7919
-                traj = run_single(
-                    mechanism, n_agents, n_adversarial, seed=seed,
-                    epsilon_start=1.0, epsilon_end=1.0,
-                )
-                trajectories.append(traj)
-
-            bs, ci_low, ci_high, _, _ = compute_basin_stability(trajectories, R_coop)
-            key = f"random_{mechanism}_{adv_frac}"
-            baseline_results[key] = {
-                "basin_stability": bs,
-                "ci_lower": ci_low,
-                "ci_upper": ci_high,
-            }
-
-    # Oracle baseline: epsilon=0, near-zero noise
-    print("--- Oracle Baseline ---")
-    # Oracle is simulated by setting epsilon=0 and very low signal noise
-    # (can't set sigma=0 exactly, use 0.001)
-
-    # Heuristic baseline: epsilon=0, no learning (alpha=0)
-    print("--- Heuristic Baseline ---")
-    for mechanism in mechanisms:
-        R_coop = 100.0
-        for adv_frac in adversarial_fractions:
-            n_adversarial = int(n_agents * adv_frac)
-            trajectories = []
-            for seed_idx in range(n_seeds):
-                seed = seed_idx * 7919
-                traj = run_single(
-                    mechanism, n_agents, n_adversarial, seed=seed,
-                    alpha=0.0, epsilon_start=0.0, epsilon_end=0.0,
-                )
-                trajectories.append(traj)
-
-            bs, ci_low, ci_high, _, _ = compute_basin_stability(trajectories, R_coop)
-            key = f"heuristic_{mechanism}_{adv_frac}"
-            baseline_results[key] = {
-                "basin_stability": bs,
-                "ci_lower": ci_low,
-                "ci_upper": ci_high,
-            }
-
-    return baseline_results
-
-
-def save_results(results, baseline_results=None, output_dir=None):
-    """Save results to JSON."""
     if output_dir is None:
         output_dir = Path(__file__).parent / "results"
     output_dir = Path(output_dir)
-    output_dir.mkdir(exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    traj_path = output_dir / f"trajectory_{timestamp}.csv"
+    summ_path = output_dir / f"summary_{timestamp}.csv"
 
-    # Main results
-    filepath = output_dir / f"basin_stability_{timestamp}.json"
-    with open(filepath, "w") as f:
-        json.dump(results, f, indent=2)
-    print(f"\nResults saved to: {filepath}")
+    master_key = jr.PRNGKey(master_seed)
+    results = {}
 
-    # Baselines
-    if baseline_results:
-        bl_path = output_dir / f"baselines_{timestamp}.json"
-        with open(bl_path, "w") as f:
-            json.dump(baseline_results, f, indent=2)
-        print(f"Baselines saved to: {bl_path}")
+    print(f"Devices: {jax.devices()}")
+    print(f"vmap mode: batching {n_seeds} seeds per condition\n")
 
-    return filepath
+    for mechanism in mechanisms:
+        print(f"\n{'='*50}")
+        print(f"Mechanism: {mechanism.upper()}")
+        print(f"{'='*50}")
+
+        # Cooperative baseline (0 adversaries)
+        n_baseline = min(50, n_seeds)
+        key, subkey = jr.split(master_key)
+        batch_final = run_batched(
+            mechanism, n_agents, 0, subkey, n_baseline, T=T, metrics=metrics,
+        )
+        baseline_arrs = np.array(batch_final.global_attrs["metric_resource_level"])  # (n_baseline, T)
+        eval_start = int(T * 0.75)
+        R_coop = float(np.mean(baseline_arrs[:, eval_start:]))
+        print(f"  R_coop = {R_coop:.2f} (from {n_baseline} vmapped seeds)")
+
+        results[mechanism] = {"R_coop": float(R_coop)}
+
+        for adv_frac in adversarial_fractions:
+            n_adversarial = int(n_agents * adv_frac)
+
+            key, subkey = jr.split(key)
+            batch_final = run_batched(
+                mechanism, n_agents, n_adversarial, subkey, n_seeds,
+                T=T, metrics=metrics,
+            )
+
+            # Extract metric arrays: shape (n_seeds, T)
+            resource_arrs = np.array(batch_final.global_attrs["metric_resource_level"])
+            eval_means = np.mean(resource_arrs[:, eval_start:], axis=1)  # (n_seeds,)
+
+            n_stable = int(np.sum(eval_means > R_coop))
+            n_total = n_seeds
+            bs = n_stable / n_total
+            ci_low, ci_high = wilson_ci(n_stable, n_total)
+
+            # Write trajectory CSV (one row per seed per timestep)
+            for seed_idx in range(n_seeds):
+                run_meta = {
+                    "adversarial_fraction": adv_frac,
+                    "mechanism": mechanism,
+                    "seed": seed_idx,
+                }
+                # Extract single-seed final state for CSV writer
+                # We write directly from the batched arrays
+                metric_row = {}
+                for mn in metric_names:
+                    arr = np.array(batch_final.global_attrs[f"metric_{mn}"])
+                    metric_row[mn] = arr[seed_idx]
+                # Write trajectory rows for this seed
+                with open(traj_path, "a") as f:
+                    if traj_path.stat().st_size == 0:
+                        header = ",".join(["mechanism", "adversarial_fraction", "seed", "step"] + metric_names)
+                        f.write(header + "\n")
+                    for step in range(T):
+                        vals = [str(metric_row[mn][step]) for mn in metric_names]
+                        row = f"{mechanism},{adv_frac},{seed_idx},{step}," + ",".join(vals)
+                        f.write(row + "\n")
+
+            # Write summary CSV row
+            summary_metrics = {}
+            for mn in metric_names:
+                arr = np.array(batch_final.global_attrs[f"metric_{mn}"])
+                final_vals = arr[:, -1]
+                summary_metrics[f"mean_{mn}"] = float(np.mean(final_vals))
+                summary_metrics[f"std_{mn}"] = float(np.std(final_vals))
+
+            with open(summ_path, "a") as f:
+                if summ_path.stat().st_size == 0:
+                    cols = ["mechanism", "adversarial_fraction", "n_seeds",
+                            "basin_stability", "bs_ci_lower", "bs_ci_upper"]
+                    cols += sorted(summary_metrics.keys())
+                    f.write(",".join(cols) + "\n")
+                vals = [mechanism, str(adv_frac), str(n_seeds),
+                        str(bs), str(ci_low), str(ci_high)]
+                vals += [str(summary_metrics[k]) for k in sorted(summary_metrics.keys())]
+                f.write(",".join(vals) + "\n")
+
+            results[mechanism][str(adv_frac)] = {
+                "basin_stability": bs,
+                "ci_lower": ci_low,
+                "ci_upper": ci_high,
+                "n_stable": n_stable,
+                "n_total": n_total,
+            }
+
+            print(
+                f"  adv={adv_frac:.0%} -> BS={bs:.3f} "
+                f"[{ci_low:.3f}, {ci_high:.3f}] ({n_seeds} seeds vmapped)"
+            )
+
+    print(f"\nTrajectory CSV: {traj_path}")
+    print(f"Summary CSV:    {summ_path}")
+    return results, traj_path, summ_path
 
 
-if __name__ == "__main__":
+def main():
+    """CLI entry point for basin stability experiment."""
+    _run_cli()
+
+
+def _run_cli():
     parser = argparse.ArgumentParser(description="Basin Stability Experiment")
     parser.add_argument("--n_seeds", type=int, default=500)
     parser.add_argument("--n_agents", type=int, default=20)
-    parser.add_argument("--baselines", action="store_true")
     parser.add_argument("--quick", action="store_true", help="Quick test with 10 seeds")
+    parser.add_argument("--plot", action="store_true", help="Generate plots after sweep")
+    parser.add_argument("--vmap", action="store_true",
+                        help="Use vmap over seeds (batched GPU execution)")
+    parser.add_argument("--output-dir", type=str, default=None,
+                        help="Directory for output CSVs and plots")
     args = parser.parse_args()
 
     n_seeds = 10 if args.quick else args.n_seeds
@@ -308,19 +357,21 @@ if __name__ == "__main__":
     print(f"Agents: {args.n_agents}, Seeds: {n_seeds}")
     print(f"Mechanisms: PDD, PRD, PLD")
     print(f"Adversarial fractions: 0-60%")
+    print(f"Metrics: {sorted(BASIN_METRICS.keys())}")
+    print(f"Mode: {'vmap (batched)' if args.vmap else 'sequential'}")
+    print(f"Devices: {jax.devices()}")
     print()
 
-    results = run_sweep(n_agents=args.n_agents, n_seeds=n_seeds)
-
-    baseline_results = None
-    if args.baselines:
-        baseline_results = run_baselines(n_agents=args.n_agents, n_seeds=n_seeds)
-
-    save_results(results, baseline_results)
+    sweep_fn = run_sweep_vmap if args.vmap else run_sweep
+    results, traj_path, summ_path = sweep_fn(
+        n_agents=args.n_agents,
+        n_seeds=n_seeds,
+        output_dir=args.output_dir,
+    )
 
     # Summary table
     print("\n" + "=" * 70)
-    print("BASIN STABILITY (BS +/- 95% Wilson CI)")
+    print("BASIN STABILITY")
     print("=" * 70)
     header = f"{'Mech':<8}"
     for frac in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]:
@@ -334,3 +385,23 @@ if __name__ == "__main__":
             row += f" {data['basin_stability']:>7.3f}"
         print(row)
     print("=" * 70)
+
+    if args.plot:
+        from experiments.basin_stability.plots import (
+            plot_resources_vs_adversarial,
+            plot_resource_trajectories,
+        )
+        plot_dir = Path(__file__).parent / "results"
+        fig_a = plot_resources_vs_adversarial(
+            summ_path, output_path=plot_dir / "resources_vs_adversarial.png"
+        )
+        for mech in ["pdd", "prd", "pld"]:
+            fig_b = plot_resource_trajectories(
+                traj_path, mechanism=mech,
+                output_path=plot_dir / f"trajectories_{mech}.png"
+            )
+        print(f"\nPlots saved to {plot_dir}/")
+
+
+if __name__ == "__main__":
+    main()

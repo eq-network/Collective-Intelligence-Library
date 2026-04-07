@@ -1,0 +1,10 @@
+.git
+.venv
+results/
+logs/
+random_shit/
+*.pyc
+__pycache__
+.claude/
+plans/
+changelogs/

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "mycorrhiza"
+version = "0.1.0"
+description = "Composable mechanism simulation via functional graph transforms"
+requires-python = ">=3.10"
+dependencies = [
+    "jax>=0.4.20",
+    "jaxlib>=0.4.20",
+    "numpy>=1.24.0",
+    "matplotlib>=3.7.0",
+]
+
+[project.optional-dependencies]
+cuda = ["jax[cuda12]>=0.4.20"]
+full = [
+    "jax[cuda12]>=0.4.20",
+    "seaborn>=0.12.0",
+    "pandas>=2.0.0",
+]
+
+[project.scripts]
+mycorrhiza-sweep = "experiments.basin_stability.run_experiment:main"
+
+[tool.setuptools.packages.find]
+include = ["core*", "experiments*", "metrics*"]

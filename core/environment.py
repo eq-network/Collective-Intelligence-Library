@@ -1,76 +1,59 @@
 # core/environment.py
 """
-Defines the abstract base class for a simulation environment.
+Simulation environment built on transform-based stepping via jax.lax.scan.
 
-Supports two modes:
-1. Transform-based: a composed Transform (GraphState -> GraphState) drives each step
-2. Agent-based (legacy): obs -> act -> apply cycle
+The environment holds an initial GraphState and a composed Transform.
+Running the simulation applies the transform T times via lax.scan,
+producing a final GraphState with filled metric arrays.
 
-Subclasses using transforms only need to implement is_terminated() and reset().
+Termination is handled via an 'alive' flag in global_attrs — the scan
+always runs T iterations, but transforms become no-ops when alive=0.
 """
-import logging
-from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Tuple, Optional
+import jax.lax as lax
 
-from core.agents import Agent, Action
 from core.graph import GraphState
 from core.category import Transform
 
-logger = logging.getLogger(__name__)
 
+class Environment:
+    """Transform-based simulation environment with lax.scan execution.
 
-class Environment(ABC):
+    The environment is fully defined by:
+    1. An initial GraphState (immutable pytree)
+    2. A composed step Transform (GraphState -> GraphState)
+
+    Usage:
+        env = Environment(initial_state, step_transform)
+        final_state = env.run(T=200)
+        # final_state.global_attrs contains filled metric arrays
     """
-    Abstract Base Class for a simulation environment.
 
-    If step_transform is provided, step() applies it directly to GraphState.
-    Otherwise, falls back to the agent-based obs -> act -> apply cycle.
-    """
-    def __init__(self, initial_state: GraphState, agents: List[Agent] = None,
-                 step_transform: Transform = None):
+    def __init__(self, initial_state: GraphState, step_transform: Transform):
         self.state = initial_state
         self._initial_state = initial_state
-        self.agents = agents or []
         self._step_transform = step_transform
-        self.round_num = 0
-        self.history = []
 
-    def get_observation_for_agent(self, agent: Agent) -> Dict[str, Any]:
-        raise NotImplementedError("Implement for agent-based stepping")
+    def run(self, num_rounds: int) -> GraphState:
+        """Run the simulation via jax.lax.scan.
 
-    def apply_actions(self, actions: List[Action]) -> GraphState:
-        raise NotImplementedError("Implement for agent-based stepping")
+        Applies step_transform num_rounds times. All state evolution,
+        metric recording, and termination handling happen inside the
+        transform pipeline (via the alive flag pattern).
 
-    def step(self) -> Tuple[GraphState, bool]:
-        if self._step_transform is not None:
-            self.state = self._step_transform(self.state)
-        else:
-            observations = {
-                agent.agent_id: self.get_observation_for_agent(agent)
-                for agent in self.agents
-            }
-            actions = [agent.act(observations[agent.agent_id]) for agent in self.agents]
-            self.state = self.apply_actions(actions)
+        Args:
+            num_rounds: Number of steps to execute.
 
-        self.round_num += 1
-        self.history.append(self.state)
-        return self.state, self.is_terminated()
-
-    @abstractmethod
-    def is_terminated(self) -> bool:
-        pass
-
-    def run(self, num_rounds: int) -> List[GraphState]:
+        Returns:
+            Final GraphState with filled metric arrays and terminal state.
+        """
         self.reset()
-        for i in range(num_rounds):
-            logger.debug(f"Round {i+1}/{num_rounds}")
-            _, terminated = self.step()
-            if terminated:
-                logger.info(f"Terminated at round {i+1}")
-                break
-        return self.history
+
+        def scan_body(state, _):
+            return self._step_transform(state), None
+
+        self.state, _ = lax.scan(scan_body, self.state, None, length=num_rounds)
+        return self.state
 
     def reset(self) -> None:
+        """Reset to initial state."""
         self.state = self._initial_state
-        self.round_num = 0
-        self.history = []

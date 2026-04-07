@@ -4,7 +4,7 @@ Governed Commons Harvest Environment.
 Composes through Mycorrhiza's core abstractions:
 - GraphState for all state
 - Transform pipeline for stepping
-- Environment ABC for the run loop
+- Environment for lax.scan execution
 
 Adapted from SocialJax Commons Harvest Open (Guo et al., 2025).
 """
@@ -12,7 +12,6 @@ import jax.numpy as jnp
 import jax.random as jr
 
 from core.environment import Environment
-from core.graph import GraphState
 
 from .state import create_initial_state
 from .transforms import make_step_transform
@@ -24,9 +23,6 @@ class GovernedHarvestEnv(Environment):
     The environment is fully defined by:
     1. Initial GraphState (from state.py)
     2. A composed step transform (from transforms.py)
-
-    No need to implement get_observation_for_agent or apply_actions —
-    the transform pipeline handles everything.
     """
 
     def __init__(self, mechanism: str = "pdd", n_agents: int = 100,
@@ -54,9 +50,3 @@ class GovernedHarvestEnv(Environment):
 
         super().__init__(initial_state=state, step_transform=step_transform)
         self.mechanism = mechanism
-
-    def is_terminated(self) -> bool:
-        step = self.state.global_attrs["step"]
-        max_steps = self.state.global_attrs["max_steps"]
-        resource = self.state.global_attrs["resource_level"]
-        return bool(step >= max_steps) or bool(resource < 1.0)

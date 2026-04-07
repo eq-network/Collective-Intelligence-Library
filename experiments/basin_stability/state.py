@@ -34,6 +34,8 @@ def create_initial_state(
     n_reps: int = 3,
     mechanism: str = "pdd",
     seed: int = 42,
+    key: jnp.ndarray = None,
+    metrics: dict = None,
 ) -> GraphState:
     """Create initial GraphState for the basin stability experiment.
 
@@ -45,8 +47,13 @@ def create_initial_state(
 
     For PLD, action space is K proposals + 1 delegate action = K+1 actions.
     For PDD/PRD, action space is K proposals.
+
+    Args:
+        seed: Integer seed (used if key is None).
+        key: JAX PRNGKey (takes precedence over seed). Required for vmap.
     """
-    key = jr.PRNGKey(seed)
+    if key is None:
+        key = jr.PRNGKey(seed)
 
     # Node types: 0=cooperative, 1=adversarial
     node_types = jnp.zeros(n_agents, dtype=jnp.int32)
@@ -100,12 +107,14 @@ def create_initial_state(
         "signals": jnp.ones((n_agents, K)),     # (N, K) — noisy signals per agent
         "selected_proposal": jnp.array(0, dtype=jnp.int32),
         "step": jnp.array(0, dtype=jnp.int32),
+        "alive": jnp.array(1.0),               # alive flag for lax.scan termination
         "rng_key": key,
         # Static config
         "K": K,
         "T": T,
         "n_actions": n_actions,
         "state_dim": state_dim,
+        "initial_resource": initial_resource,
         "collapse_threshold": collapse_threshold,
         "alpha": alpha,
         "gamma": gamma,
@@ -117,6 +126,11 @@ def create_initial_state(
         "n_reps": n_reps,
         "mechanism": mechanism,
     }
+
+    # Pre-allocate metric arrays
+    if metrics:
+        for name in metrics:
+            global_attrs[f"metric_{name}"] = jnp.zeros(T)
 
     return GraphState(
         node_types=node_types,
