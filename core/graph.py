@@ -92,6 +92,10 @@ class GraphState:
         Returns:
             children: List of arrays (the dynamic data JAX can transform)
             aux_data: Tuple of static metadata (dict keys, structure info)
+
+        Global attrs are partitioned by type:
+        - JAX arrays (jnp.ndarray, jax.Array) → children (dynamic, traced)
+        - Python scalars (int, float, str, bool) → aux_data (static, baked in)
         """
         # Children are the actual arrays that JAX will transform
         children = [self.node_types]
@@ -109,12 +113,23 @@ class GraphState:
         for k in edge_attr_keys:
             children.append(self.edge_attrs[k])
 
-        # Auxiliary data: dict keys and global_attrs (static, not traced)
+        # Partition global_attrs: JAX arrays are dynamic, everything else is static
+        dynamic_global_keys = []
+        static_global_items = []
+        for k in sorted(self.global_attrs.keys()):
+            v = self.global_attrs[k]
+            if isinstance(v, (jnp.ndarray, jax.Array)):
+                dynamic_global_keys.append(k)
+                children.append(v)
+            else:
+                static_global_items.append((k, v))
+
         aux_data = (
             tuple(node_attr_keys),
             tuple(adj_matrix_keys),
             tuple(edge_attr_keys),
-            tuple(self.global_attrs.items())  # Treat as static
+            tuple(dynamic_global_keys),
+            tuple(static_global_items),
         )
 
         return children, aux_data
@@ -131,7 +146,8 @@ class GraphState:
         Returns:
             Reconstructed GraphState
         """
-        node_attr_keys, adj_matrix_keys, edge_attr_keys, global_items = aux_data
+        (node_attr_keys, adj_matrix_keys, edge_attr_keys,
+         dynamic_global_keys, static_global_items) = aux_data
 
         # First child is always node_types
         node_types = children[0]
@@ -155,8 +171,11 @@ class GraphState:
             edge_attrs[k] = children[idx]
             idx += 1
 
-        # Reconstruct global_attrs from static data
-        global_attrs = dict(global_items)
+        # Reconstruct global_attrs: merge dynamic arrays + static values
+        global_attrs = dict(static_global_items)
+        for k in dynamic_global_keys:
+            global_attrs[k] = children[idx]
+            idx += 1
 
         return cls(
             node_types=node_types,

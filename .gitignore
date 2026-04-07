@@ -9,3 +9,5 @@ results/
 experiment_outputs/
 simulation_results/
 .pyc
+.claude/
+
