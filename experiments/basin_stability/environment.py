@@ -85,15 +85,18 @@ def run_batched(mechanism, n_agents, n_adversarial, master_key, n_seeds, T=200,
         **kwargs,
     )
 
-    keys = jr.split(master_key, n_seeds)
     K = template.global_attrs["K"]
     state_dim = template.global_attrs["state_dim"]
     n_actions = template.global_attrs["n_actions"]
     n_reps = template.global_attrs["n_reps"]
 
-    def run_one(key):
-        # Re-randomize only the key-dependent parts
-        key, k1, k2, k_shuffle, k_reps = jr.split(key, 5)
+    # Use integer seed indices — avoids typed-key pytree issues with vmap
+    master_seed = jr.randint(master_key, (), 0, 2**31 - 1)
+    seed_offsets = jnp.arange(n_seeds)
+
+    def run_one(seed_offset):
+        key = jr.PRNGKey(master_seed + seed_offset)
+        key, k1, k_shuffle, k_reps = jr.split(key, 4)
 
         q_weights = jr.normal(k1, (n_agents, n_actions, state_dim)) * 0.01
 
@@ -102,8 +105,11 @@ def run_batched(mechanism, n_agents, n_adversarial, master_key, n_seeds, T=200,
         signal_quality = jr.permutation(k_shuffle, signal_quality)
 
         # Random initial representatives for PRD
-        rep_indices = jr.choice(k_reps, n_agents, shape=(n_reps,), replace=False)
-        rep_mask = jnp.zeros(n_agents, dtype=jnp.float32).at[rep_indices].set(1.0)
+        # Use permutation + slice instead of choice(replace=False) for vmap safety
+        perm = jr.permutation(k_reps, n_agents)
+        rep_indices = perm[:n_reps]
+        rep_mask = jnp.zeros(n_agents, dtype=jnp.float32)
+        rep_mask = rep_mask.at[rep_indices].set(1.0)
 
         # Swap into template
         state = template
@@ -118,4 +124,4 @@ def run_batched(mechanism, n_agents, n_adversarial, master_key, n_seeds, T=200,
         final, _ = lax.scan(scan_body, state, None, length=T)
         return final
 
-    return jax.vmap(run_one)(keys)
+    return jax.vmap(run_one)(seed_offsets)
