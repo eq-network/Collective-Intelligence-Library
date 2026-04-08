@@ -113,16 +113,19 @@ class GraphState:
         for k in edge_attr_keys:
             children.append(self.edge_attrs[k])
 
-        # Partition global_attrs: JAX arrays are dynamic, everything else is static
+        # Partition global_attrs into dynamic (JAX-traced) and static (Python constants).
+        # Static = Python primitives that are compile-time constants.
+        # Dynamic = everything else (arrays, typed PRNG keys, any JAX-managed type).
+        # This inverted check is future-proof: new JAX types automatically become dynamic.
         dynamic_global_keys = []
         static_global_items = []
         for k in sorted(self.global_attrs.keys()):
             v = self.global_attrs[k]
-            if isinstance(v, (jnp.ndarray, jax.Array)):
+            if isinstance(v, (int, float, str, bool, type(None))):
+                static_global_items.append((k, v))
+            else:
                 dynamic_global_keys.append(k)
                 children.append(v)
-            else:
-                static_global_items.append((k, v))
 
         aux_data = (
             tuple(node_attr_keys),
