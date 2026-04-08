@@ -18,7 +18,10 @@
       "Read(//c/Users/Jonas/AppData/Local/Temp/claude/C--GitHub-Mycorrhiza/tasks/**)",
       "Bash(pip show:*)",
       "WebFetch(domain:miguelemos.co)",
-      "WebFetch(domain:blog.block.science)"
+      "WebFetch(domain:blog.block.science)",
+      "Bash(git:*)",
+      "Skill(arch-overview)",
+      "WebFetch(domain:pufferai.github.io)"
     ]
   }
 }

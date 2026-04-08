@@ -34,14 +34,22 @@ def capture_rate(state: GraphState):
 
 
 def voting_entropy(state: GraphState):
-    """Shannon entropy of the vote distribution across proposals.
+    """Shannon entropy of the approval count distribution across proposals.
 
-    High entropy = dispersed votes, low entropy = consensus.
+    Uses approval_votes (N, K) if available, falling back to last_action.
+    High entropy = dispersed approvals, low entropy = consensus.
     """
-    actions = state.node_attrs["last_action"]
     K = state.global_attrs["K"]
-    votes_onehot = jnp.sum(jax_nn_one_hot(actions, K), axis=0)
-    probs = votes_onehot / (jnp.sum(votes_onehot) + 1e-8)
+    approvals = state.node_attrs.get("approval_votes", None)
+    if approvals is not None:
+        # Sum approvals per portfolio, weighted by vote_weight if available
+        weights = state.node_attrs.get("vote_weight", jnp.ones(approvals.shape[0]))
+        approval_counts = jnp.sum(approvals * weights[:, None], axis=0)  # (K,)
+    else:
+        # Fallback for legacy states without approval_votes
+        actions = state.node_attrs["last_action"]
+        approval_counts = jnp.sum(jax_nn_one_hot(actions, K), axis=0)
+    probs = approval_counts / (jnp.sum(approval_counts) + 1e-8)
     # Entropy with log2, masking zeros
     log_probs = jnp.where(probs > 1e-8, jnp.log2(probs), 0.0)
     return -jnp.sum(probs * log_probs)

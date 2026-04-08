@@ -31,12 +31,13 @@ class BasinStabilityEnv(Environment):
     """
 
     def __init__(self, mechanism: str = "pdd", n_agents: int = 20,
-                 n_adversarial: int = 0, seed: int = 42,
-                 metrics: dict = None, **kwargs):
+                 n_adversarial: int = 0, tracking_lambda: float = 0.9,
+                 seed: int = 42, metrics: dict = None, **kwargs):
         state = create_initial_state(
             n_agents=n_agents,
             n_adversarial=n_adversarial,
             mechanism=mechanism,
+            tracking_lambda=tracking_lambda,
             seed=seed,
             metrics=metrics,
             **kwargs,
@@ -49,7 +50,7 @@ class BasinStabilityEnv(Environment):
 
 
 def run_batched(mechanism, n_agents, n_adversarial, master_key, n_seeds, T=200,
-                metrics=None, **kwargs):
+                metrics=None, tracking_lambda=0.9, **kwargs):
     """Run n_seeds episodes in parallel via jax.vmap.
 
     All seeds run as a single batched kernel — this is where GPU/TPU
@@ -57,8 +58,7 @@ def run_batched(mechanism, n_agents, n_adversarial, master_key, n_seeds, T=200,
     has a leading (n_seeds,) dimension.
 
     Strategy: build one template state in Python (outside vmap), then inside
-    vmap only swap the rng_key and re-randomize key-dependent arrays.  This
-    avoids Python control flow inside the traced function.
+    vmap only swap the rng_key and re-randomize key-dependent arrays.
 
     Args:
         mechanism: governance mechanism ("pdd", "prd", "pld")
@@ -68,6 +68,7 @@ def run_batched(mechanism, n_agents, n_adversarial, master_key, n_seeds, T=200,
         n_seeds: number of parallel episodes
         T: number of timesteps
         metrics: dict of metric functions (optional)
+        tracking_lambda: EMA decay for trust (0.9=predictive, 0.1=non-predictive)
 
     Returns:
         Batched final GraphState with shape (n_seeds, ...) on all arrays.
@@ -79,15 +80,13 @@ def run_batched(mechanism, n_agents, n_adversarial, master_key, n_seeds, T=200,
         n_agents=n_agents,
         n_adversarial=n_adversarial,
         mechanism=mechanism,
+        tracking_lambda=tracking_lambda,
         seed=0,
         T=T,
         metrics=metrics,
         **kwargs,
     )
 
-    K = template.global_attrs["K"]
-    state_dim = template.global_attrs["state_dim"]
-    n_actions = template.global_attrs["n_actions"]
     n_reps = template.global_attrs["n_reps"]
 
     # Use integer seed indices — avoids typed-key pytree issues with vmap
@@ -96,16 +95,13 @@ def run_batched(mechanism, n_agents, n_adversarial, master_key, n_seeds, T=200,
 
     def run_one(seed_offset):
         key = jr.PRNGKey(master_seed + seed_offset)
-        key, k1, k_shuffle, k_reps = jr.split(key, 4)
-
-        q_weights = jr.normal(k1, (n_agents, n_actions, state_dim)) * 0.01
+        key, k_shuffle, k_reps = jr.split(key, 3)
 
         # Shuffle signal quality (same tier sizes, different assignment)
         signal_quality = template.node_attrs["signal_quality"]
         signal_quality = jr.permutation(k_shuffle, signal_quality)
 
         # Random initial representatives for PRD
-        # Use permutation + slice instead of choice(replace=False) for vmap safety
         perm = jr.permutation(k_reps, n_agents)
         rep_indices = perm[:n_reps]
         rep_mask = jnp.zeros(n_agents, dtype=jnp.float32)
@@ -113,7 +109,6 @@ def run_batched(mechanism, n_agents, n_adversarial, master_key, n_seeds, T=200,
 
         # Swap into template
         state = template
-        state = state.update_node_attrs("q_weights", q_weights)
         state = state.update_node_attrs("signal_quality", signal_quality)
         state = state.update_node_attrs("rep_mask", rep_mask)
         state = state.update_global_attr("rng_key", key)
