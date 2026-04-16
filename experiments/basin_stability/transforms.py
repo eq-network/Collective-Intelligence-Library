@@ -136,43 +136,42 @@ def make_voting_transform(mechanism: str) -> Transform:
 
 # --- Aggregation Transforms --------------------------------------------------
 
-def make_aggregation_transform(mechanism: str) -> Transform:
-    """Create aggregation transform for the given mechanism.
+# --- Weight Assignment Transforms (mechanism-specific) ------------------------
 
-    PDD: equal-weight approval counts — each agent's approvals count equally.
-    PRD: representatives-only — only reps' approvals count.
-    PLD: delegation-weighted — vote_weight reflects delegation accumulation.
+def equal_weight_transform(state: GraphState) -> GraphState:
+    """PDD: assign equal weight to all agents."""
+    n_agents = state.node_types.shape[0]
+    return state.update_node_attrs("vote_weight", jnp.ones(n_agents))
+
+
+def rep_weight_transform(state: GraphState) -> GraphState:
+    """PRD: only elected representatives have voting weight."""
+    return state.update_node_attrs("vote_weight", state.node_attrs["rep_mask"])
+
+
+# PLD: vote_weight is already set in the voting transform (delegation logic)
+
+
+# --- Aggregation Transform (universal, shared across all mechanisms) ----------
+
+def aggregation_transform(state: GraphState) -> GraphState:
+    """Weighted plurality vote on each agent's top choice.
+
+    Reads vote_weight from node_attrs — this is the ONLY input that
+    varies between mechanisms. The aggregation rule itself is identical.
     """
-    def aggregation_transform(state: GraphState) -> GraphState:
-        K = state.global_attrs["K"]
-        approvals = state.node_attrs["approval_votes"]  # (N, K) binary
-        vote_weights = state.node_attrs["vote_weight"]   # (N,)
+    K = state.global_attrs["K"]
+    actions = state.node_attrs["last_action"]     # (N,) top choice per agent
+    weights = state.node_attrs["vote_weight"]     # (N,) mechanism-assigned weight
 
-        if mechanism == "pdd":
-            # Equal-weight approval voting
-            approval_counts = jnp.sum(approvals, axis=0)  # (K,)
+    votes_onehot = jax.nn.one_hot(actions, K)     # (N, K)
+    vote_counts = jnp.sum(votes_onehot * weights[:, None], axis=0)  # (K,)
 
-        elif mechanism == "prd":
-            # Only representatives vote
-            rep_mask = state.node_attrs["rep_mask"]  # (N,)
-            approval_counts = jnp.sum(approvals * rep_mask[:, None], axis=0)
+    selected = jnp.argmax(vote_counts)
 
-        elif mechanism == "pld":
-            # Delegation-weighted approval voting
-            approval_counts = jnp.sum(approvals * vote_weights[:, None], axis=0)
-
-        else:
-            # Fallback (should not happen — mechanism checked at composition time)
-            approval_counts = jnp.sum(approvals, axis=0)
-
-        # Winner = argmax of approval counts (ties broken by lowest index)
-        selected = jnp.argmax(approval_counts)
-
-        new_global = dict(state.global_attrs)
-        new_global["selected_proposal"] = selected
-        return state.replace(global_attrs=new_global)
-
-    return aggregation_transform
+    new_global = dict(state.global_attrs)
+    new_global["selected_proposal"] = selected
+    return state.replace(global_attrs=new_global)
 
 
 # --- Resource Update Transform ------------------------------------------------
@@ -282,12 +281,19 @@ def make_election_transform(mechanism: str) -> Transform:
         trust_scores = state.node_attrs["trust_scores"]  # (N, N)
         is_adversarial = state.node_types                 # (N,)
 
-        # Zero out self-trust for voting purposes
+        # Mask self-trust to zero so agents can't vote for themselves
         mask = 1.0 - jnp.eye(n_agents)
         masked_trust = trust_scores * mask
 
-        # Type-aware election voting
-        votes = jax.vmap(election_vote)(masked_trust, is_adversarial)  # (N,)
+        # Optimal bloc voting: each faction targets ceil(n_reps/2) seats
+        target_seats = (n_reps + 1) // 2  # ceil(n_reps / 2)
+        agent_indices = jnp.arange(n_agents)
+        target_seats_arr = jnp.full(n_agents, target_seats)
+
+        # Type-aware bloc election voting (spreads votes over target seats)
+        votes = jax.vmap(election_vote)(
+            masked_trust, is_adversarial, agent_indices, target_seats_arr
+        )  # (N,)
 
         # Count votes per agent via one-hot
         vote_counts = jnp.sum(jax.nn.one_hot(votes, n_agents), axis=0)
@@ -322,26 +328,46 @@ def step_counter_transform(state: GraphState) -> GraphState:
 def make_step_transform(mechanism: str = "pdd", metrics: dict = None) -> Transform:
     """Compose the full step pipeline for a given mechanism.
 
-    Pipeline:
-        proposal_gen -> voting -> aggregation -> resource_update ->
-        reward -> trust_update -> election -> step_counter -> [metrics]
+    Shared transforms (identical across all mechanisms):
+        proposal_gen, voting, aggregation, resource_update,
+        reward, trust_update, step_counter
 
-    Args:
-        mechanism: one of "pdd", "prd", "pld"
-        metrics: optional dict of {name: GraphState -> scalar} metric functions.
+    Mechanism-specific transforms (composed in, the ONLY difference):
+        PDD: equal_weight
+        PRD: rep_weight + election
+        PLD: delegation (inside voting transform) — sets vote_weight
+
+    Pipeline:
+        PDD: proposal_gen >> voting >> equal_weight >> aggregation >> resource >> reward >> trust >> step
+        PRD: proposal_gen >> voting >> rep_weight >> aggregation >> resource >> reward >> trust >> election >> step
+        PLD: proposal_gen >> voting(+delegation) >> aggregation >> resource >> reward >> trust >> step
     """
+    # Phase 1: generate proposals and signals, all agents vote
     transforms = [
         proposal_generation_transform,
         make_voting_transform(mechanism),
-        make_aggregation_transform(mechanism),
+    ]
+
+    # Phase 2: assign weights (mechanism-specific)
+    if mechanism == "pdd":
+        transforms.append(equal_weight_transform)
+    elif mechanism == "prd":
+        transforms.append(rep_weight_transform)
+    # PLD: vote_weight already set by voting transform (delegation logic)
+
+    # Phase 3: shared aggregation + dynamics (identical for all mechanisms)
+    transforms.extend([
+        aggregation_transform,
         resource_update_transform,
         reward_transform,
         trust_update_transform,
-        make_election_transform(mechanism),
-    ]
+    ])
 
-    # Metrics transform goes BEFORE step_counter so it writes at the
-    # current step index (0, 1, 2, ...) before the counter increments.
+    # Phase 4: election for PRD (updates rep_mask for next round)
+    if mechanism == "prd":
+        transforms.append(make_election_transform(mechanism))
+
+    # Phase 5: metrics + step counter
     if metrics:
         from metrics.transform import make_metrics_transform
         transforms.append(make_metrics_transform(metrics))

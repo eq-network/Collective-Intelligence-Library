@@ -10,6 +10,7 @@ Agent model: Heuristic signal-threshold voting with adaptive trust dynamics.
     - Trust scores update via EMA on observed performance.
 """
 import jax.numpy as jnp
+import jax.random as jr
 
 
 def approval_vote(signals, is_adversarial):
@@ -95,24 +96,37 @@ def delegate_target(trust_scores_row, is_adversarial):
     )
 
 
-def election_vote(trust_scores_row, is_adversarial):
-    """PRD election vote based on trust scores.
+def election_vote(trust_scores_row, is_adversarial, agent_idx, target_seats):
+    """PRD election vote — optimal bloc voting strategy.
 
-    Cooperative agents vote for their most-trusted agent (best performer).
-    Adversarial agents vote for their least-trusted (try to install bad reps).
+    Each faction targets ceil(n_reps/2) seats for majority control.
+    Cooperative agents target the most-trusted candidates.
+    Adversarial agents target the least-trusted candidates.
+    Votes spread evenly across target candidates via agent index modulo.
+
+    This is game-theoretically optimal for committee capture under
+    plurality voting (bloc voting strategy from social choice theory).
 
     Args:
-        trust_scores_row: (N,) this agent's trust in all agents (self masked to 0)
+        trust_scores_row: (N,) this agent's trust in all agents (self masked)
         is_adversarial: () boolean
+        agent_idx: () this agent's index (for vote spreading)
+        target_seats: () number of seats to target (ceil(n_reps/2))
 
     Returns:
         vote: () int — index of agent voted for
     """
-    return jnp.where(
-        is_adversarial,
-        jnp.argmin(trust_scores_row),
-        jnp.argmax(trust_scores_row),
-    )
+    # Rank candidates: cooperative targets highest trust, adversarial targets lowest
+    # argsort ascending: index 0 = least trusted, index -1 = most trusted
+    ranked = jnp.argsort(trust_scores_row)
+
+    # Adversarial: pick from bottom target_seats (least trusted)
+    # Cooperative: pick from top target_seats (most trusted)
+    N = trust_scores_row.shape[0]
+    adv_target = ranked[agent_idx % target_seats]              # bottom target_seats
+    coop_target = ranked[N - 1 - (agent_idx % target_seats)]   # top target_seats
+
+    return jnp.where(is_adversarial, adv_target, coop_target)
 
 
 def trust_update(trust_scores, voted_proposal_utility, mean_utility, tracking_lambda):

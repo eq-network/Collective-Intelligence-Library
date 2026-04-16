@@ -122,11 +122,13 @@ def run_sweep(
                 )
                 arr = np.array(final.global_attrs["metric_resource_level"])
                 eval_start = int(len(arr) * 0.75)
-                baseline_evals.append(float(np.mean(arr[eval_start:])))
-            R_coop = np.mean(baseline_evals)
-            print(f"  R_coop = {R_coop:.2f}")
+                log_arr = np.log(np.clip(arr[eval_start:], 1e-10, None))
+                baseline_evals.append(float(np.mean(log_arr)))
+            R_coop_log = float(np.median(baseline_evals))
+            R_coop_display = float(np.exp(R_coop_log))
+            print(f"  R_coop = {R_coop_display:.2f} (log={R_coop_log:.2f})")
 
-            results[condition_key] = {"R_coop": float(R_coop)}
+            results[condition_key] = {"R_coop_log": R_coop_log, "R_coop": R_coop_display}
 
             for adv_frac in adversarial_fractions:
                 n_adversarial = int(n_agents * adv_frac)
@@ -152,14 +154,15 @@ def run_sweep(
                     }
                     write_trajectory_csv(traj_path, final, metric_names, run_meta)
 
-                # Compute basin stability
+                # Compute basin stability (log-scale)
                 eval_means = []
                 for state in final_states:
                     arr = np.array(state.global_attrs["metric_resource_level"])
                     eval_start = int(len(arr) * 0.75)
-                    eval_means.append(float(np.mean(arr[eval_start:])))
+                    log_arr = np.log(np.clip(arr[eval_start:], 1e-10, None))
+                    eval_means.append(float(np.mean(log_arr)))
 
-                n_stable = sum(1 for v in eval_means if v > R_coop)
+                n_stable = sum(1 for v in eval_means if v > R_coop_log)
                 n_total = len(eval_means)
                 bs = n_stable / n_total
                 ci_low, ci_high = wilson_ci(n_stable, n_total)
@@ -192,6 +195,7 @@ def run_sweep_vmap(
     output_dir: str = None,
     metrics: dict = None,
     master_seed: int = 0,
+    **kwargs,
 ):
     """Run the full sweep with vmap over seeds — one GPU kernel per condition."""
     if metrics is None:
@@ -222,37 +226,38 @@ def run_sweep_vmap(
             print(f"Mechanism: {mechanism.upper()} | Tracking: {tracking_name} (lambda={tracking_lambda})")
             print(f"{'='*50}")
 
-            # Cooperative baseline (0 adversaries)
-            n_baseline = min(50, n_seeds)
-            key, subkey = jr.split(master_key)
-            batch_final = run_batched(
-                mechanism, n_agents, 0, subkey, n_baseline, T=T,
-                metrics=metrics, tracking_lambda=tracking_lambda,
-            )
-            baseline_arrs = np.array(batch_final.global_attrs["metric_resource_level"])
+            collapse_threshold = 20.0  # R_min
             eval_start = int(T * 0.75)
-            R_coop = float(np.mean(baseline_arrs[:, eval_start:]))
-            print(f"  R_coop = {R_coop:.2f} (from {n_baseline} vmapped seeds)")
-
-            results[condition_key] = {"R_coop": float(R_coop)}
+            results[condition_key] = {}
 
             for adv_frac in adversarial_fractions:
                 n_adversarial = int(n_agents * adv_frac)
 
-                key, subkey = jr.split(key)
+                key, subkey = jr.split(key if adv_frac > 0 else master_key)
                 batch_final = run_batched(
                     mechanism, n_agents, n_adversarial, subkey, n_seeds,
                     T=T, metrics=metrics, tracking_lambda=tracking_lambda,
+                    **kwargs,
                 )
 
-                # Extract metric arrays: shape (n_seeds, T)
+                # Extract resource trajectories: shape (n_seeds, T)
                 resource_arrs = np.array(batch_final.global_attrs["metric_resource_level"])
-                eval_means = np.mean(resource_arrs[:, eval_start:], axis=1)
+                final_resources = resource_arrs[:, -1]  # (n_seeds,)
 
-                n_stable = int(np.sum(eval_means > R_coop))
-                n_total = n_seeds
-                bs = n_stable / n_total
-                ci_low, ci_high = wilson_ci(n_stable, n_total)
+                # Key stats
+                median_final_R = float(np.median(final_resources))
+                mean_log_R = float(np.mean(np.log(np.clip(final_resources, 1e-10, None))))
+                survival_rate = float(np.mean(final_resources > collapse_threshold))
+                n_survived = int(np.sum(final_resources > collapse_threshold))
+
+                # Selected utility over eval window
+                if "metric_selected_utility" in batch_final.global_attrs:
+                    util_arrs = np.array(batch_final.global_attrs["metric_selected_utility"])
+                    mean_selected_yield = float(np.mean(util_arrs[:, eval_start:]))
+                else:
+                    mean_selected_yield = float('nan')
+
+                ci_low, ci_high = wilson_ci(n_survived, n_seeds)
 
                 # Write trajectory CSV
                 for seed_idx in range(n_seeds):
@@ -274,7 +279,12 @@ def run_sweep_vmap(
                             f.write(row + "\n")
 
                 # Write summary CSV row
-                summary_metrics = {}
+                summary_metrics = {
+                    "median_final_R": median_final_R,
+                    "mean_log_R": mean_log_R,
+                    "survival_rate": survival_rate,
+                    "mean_selected_yield": mean_selected_yield,
+                }
                 for mn in metric_names:
                     arr = np.array(batch_final.global_attrs[f"metric_{mn}"])
                     final_vals = arr[:, -1]
@@ -286,27 +296,35 @@ def run_sweep_vmap(
                         cols = [
                             "mechanism", "tracking_mode", "tracking_lambda",
                             "adversarial_fraction", "n_seeds",
-                            "basin_stability", "bs_ci_lower", "bs_ci_upper",
+                            "survival_rate", "survival_ci_lower", "survival_ci_upper",
+                            "median_final_R", "mean_log_R", "mean_selected_yield",
                         ]
-                        cols += sorted(summary_metrics.keys())
+                        cols += sorted(k for k in summary_metrics if k.startswith("mean_") or k.startswith("std_"))
                         f.write(",".join(cols) + "\n")
                     vals = [mechanism, tracking_name, str(tracking_lambda),
                             str(adv_frac), str(n_seeds),
-                            str(bs), str(ci_low), str(ci_high)]
-                    vals += [str(summary_metrics[k]) for k in sorted(summary_metrics.keys())]
+                            str(survival_rate), str(ci_low), str(ci_high),
+                            str(median_final_R), str(mean_log_R), str(mean_selected_yield)]
+                    vals += [str(summary_metrics[k]) for k in sorted(k for k in summary_metrics if k.startswith("mean_") or k.startswith("std_"))]
                     f.write(",".join(vals) + "\n")
 
                 results[condition_key][str(adv_frac)] = {
-                    "basin_stability": bs,
+                    "survival_rate": survival_rate,
                     "ci_lower": ci_low,
                     "ci_upper": ci_high,
-                    "n_stable": n_stable,
-                    "n_total": n_total,
+                    "median_final_R": median_final_R,
+                    "mean_log_R": mean_log_R,
+                    "mean_selected_yield": mean_selected_yield,
                 }
 
+                median_log_R = float(np.log(max(median_final_R, 1e-10)))
                 print(
-                    f"  adv={adv_frac:.0%} -> BS={bs:.3f} "
-                    f"[{ci_low:.3f}, {ci_high:.3f}] ({n_seeds} seeds vmapped)"
+                    f"  adv={adv_frac:.0%} | "
+                    f"survival={survival_rate:.0%} ({n_survived}/{n_seeds}) | "
+                    f"median log(R)={median_log_R:.1f} | "
+                    f"mean log(R)={mean_log_R:.1f} | "
+                    f"yield={mean_selected_yield:.3f} | "
+                    f"capture={float(np.mean(np.array(batch_final.global_attrs.get('metric_capture_rate', [0])))):.2f}"
                 )
 
     print(f"\nTrajectory CSV: {traj_path}")
@@ -362,25 +380,49 @@ def _run_cli():
         output_dir=args.output_dir,
     )
 
-    # Summary table
-    print("\n" + "=" * 80)
-    print("BASIN STABILITY")
-    print("=" * 80)
+    # Summary tables
+    fracs = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+
+    print("\n" + "=" * 85)
+    print("SURVIVAL RATE (fraction of seeds where R > R_min at T=200)")
+    print("=" * 85)
     header = f"{'Condition':<25}"
-    for frac in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]:
+    for frac in fracs:
         header += f" {frac:>7.0%}"
     print(header)
-    print("-" * 80)
+    print("-" * 85)
     for cond_key in sorted(results.keys()):
         row = f"{cond_key:<25}"
-        for frac in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]:
+        for frac in fracs:
             data = results[cond_key].get(str(frac))
             if data:
-                row += f" {data['basin_stability']:>7.3f}"
+                row += f" {data['survival_rate']:>7.0%}"
             else:
                 row += f" {'---':>7}"
         print(row)
-    print("=" * 80)
+
+    print("\n" + "=" * 85)
+    print("MEDIAN FINAL RESOURCE LEVEL")
+    print("=" * 85)
+    header = f"{'Condition':<25}"
+    for frac in fracs:
+        header += f" {frac:>9.0%}"
+    print(header)
+    print("-" * 85)
+    for cond_key in sorted(results.keys()):
+        row = f"{cond_key:<25}"
+        for frac in fracs:
+            data = results[cond_key].get(str(frac))
+            if data:
+                val = data['median_final_R']
+                if val > 1e6:
+                    row += f" {val:>9.1e}"
+                else:
+                    row += f" {val:>9.1f}"
+            else:
+                row += f" {'---':>9}"
+        print(row)
+    print("=" * 85)
 
     if args.plot:
         from experiments.basin_stability.plots import (
