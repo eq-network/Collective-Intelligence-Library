@@ -1,9 +1,31 @@
 """
-Temporal foundation for Mycorrhiza.
+Temporal foundation for Mycorrhiza — the EAGER tier.
 
 Time is discrete: a monotonically increasing tick counter.
 Events happen at specific ticks and have duration.
 The World is (tick, GraphState, EventLog).
+
+TWO TIERS OF TIME
+-----------------
+This module (``World`` / ``Event`` / ``EventLog`` / ``tick_world`` /
+``run_n_ticks``) is the **eager tier**. It is the right home for things that
+cannot live inside a compiled loop: genuinely effectful agents (the
+``LLMAgent`` HTTP port), append-only event logs with duration, and host-side
+prediction resolution (``core/predictions.py``, which works over Python lists
+of events and string ids). The ``run_n_ticks`` loop is a plain Python fold and
+``tick`` is carried in ``global_attrs``.
+
+For PURE simulations — where every agent and the world are side-effect free —
+use the **pure compiled tier** in ``core/scan.py`` (``run_scan`` /
+``run_scan_batch``) instead. There the whole run is one ``jax.lax.scan`` that
+``vmap``s over seeds/dials as a single program, which is what makes large
+sweeps cheap.
+
+Important: ``GraphState.global_attrs`` is *static* pytree aux (see
+``GraphState.tree_flatten``). Storing ``tick`` there, as ``tick_world`` does, is
+fine on this eager tier but must NOT be relied upon inside ``jit``/``scan`` —
+on the scan tier, time is the scan index and per-step state lives in the array
+children, never in ``global_attrs``.
 """
 
 from dataclasses import dataclass

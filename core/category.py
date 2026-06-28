@@ -165,6 +165,69 @@ def jit_transform(transform: Transform) -> Transform:
     return jitted
 
 
+# A transform that also depends on the (traced) time index: (state, t) -> state.
+# Used for phi(t) world schedules and two-phase regimes inside a scanned loop.
+TimeAware = Callable[[GraphState, Any], GraphState]
+
+
+def gated(pred_fn: Callable[[GraphState], Any], transform: Transform) -> Transform:
+    """Conditionally apply ``transform`` based on a (traced) predicate.
+
+    This is the scan-safe replacement for a Python ``if``: it lowers to
+    ``lax.cond``, so it is legal inside ``jit``/``scan`` (where Python branching
+    on a traced value is not). The off-branch is ``identity``, so a gate that is
+    off reproduces the ungated baseline exactly — which is how "every gate
+    defaults to off, reproducing the baseline" is expressed here: you simply do
+    not compose the gated transform in, or its predicate is ``False``.
+
+    The predicate may close over the scan index to build a time gate, e.g.
+    ``gated(lambda s: t >= t_shift, per_community_attention)`` inside a
+    ``round_fn`` that has ``t`` in scope.
+
+    Args:
+        pred_fn: ``state -> bool`` (a scalar boolean, possibly traced).
+        transform: The transform to apply when the predicate is true.
+
+    Returns:
+        A ``Transform`` that applies ``transform`` when ``pred_fn(state)`` is
+        true and is the identity otherwise.
+
+    Note:
+        Under ``vmap``, ``lax.cond`` lowers to a ``select`` — *both* branches run
+        and one result is chosen per batch element. For per-node masking prefer
+        ``jnp.where`` inside ``transform`` rather than a ``gated`` wrapper.
+    """
+    id_transform = identity()
+
+    def gated_transform(state: GraphState) -> GraphState:
+        return jax.lax.cond(pred_fn(state), transform, id_transform, state)
+
+    # A conditional preserves only what its active branch preserves (identity
+    # preserves everything, so the intersection is just the transform's set).
+    gated_transform.preserves = getattr(transform, 'preserves', set())
+    return gated_transform
+
+
+def bind_time(time_aware: TimeAware, t: Any) -> Transform:
+    """Partially apply a time index to a :data:`TimeAware` transform.
+
+    Yields a plain ``Transform`` so time-aware steps compose with ``sequential``
+    inside a ``round_fn`` that has the scan index ``t`` in scope::
+
+        def round_fn(state, t, key):
+            step = sequential(
+                bind_time(world_schedule, t),   # phi(t): flips at t_shift
+                observe, infer, fuse, forget,
+            )
+            return step(state)
+    """
+    def transform(state: GraphState) -> GraphState:
+        return time_aware(state, t)
+
+    transform.preserves = getattr(time_aware, 'preserves', set())
+    return transform
+
+
 def validate_properties(transform: Transform, initial_state: GraphState, final_state: GraphState) -> bool:
     """
     Validate that a transformation preserves its declared properties.
