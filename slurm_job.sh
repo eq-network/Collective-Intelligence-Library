@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=mycorrhiza
+#SBATCH --job-name=cilib
 #SBATCH --gres=gpu:1
 #SBATCH --time=02:00:00
 #SBATCH --mem=8G

@@ -43,17 +43,21 @@ That's it. Everything else is optimization or convenience.
 
 If you're new to the framework, start with the [Start Here Guide](Start_Here.md) for a hands-on walkthrough, and the [Manifesto](Manifesto.md) for the conceptual foundations. For the architectural reasoning behind the current primitives — with TikZ diagrams — see [`changelogs/2026-03-30_core-primitives.pdf`](changelogs/2026-03-30_core-primitives.pdf).
 
+**For the architecture and how to extend it:** [ARCHITECTURE.md](ARCHITECTURE.md) (the pattern map — read this first), [EXTENDING.md](EXTENDING.md) (how to add a building block), [CLAUDE.md](CLAUDE.md) (conventions for coding agents), and [CONTRIBUTING.md](CONTRIBUTING.md).
+
 The flagship worked example lives in `experiments/basin_stability/`. The core framework is in `core/` and `metrics/`, and you can use it to build simulations for any domain: epidemics, markets, opinion dynamics, or anything else involving agents and networks.
 
 ## Installation
 
 ```bash
 git clone https://github.com/eq-network/Col-Int-Lib.git
-cd Col-Int-Lib
-pip install -r requirements.txt
-# or, for editable install with JAX CUDA 12:
+cd "Collective Intelligence Library"
+pip install -e .            # editable install; `import cilib` now resolves
+# with JAX CUDA 12:
 pip install -e ".[cuda]"
 ```
+
+The library installs as `cilib` (distribution name `collective-intelligence-library`).
 
 **Requirements**: Python 3.10+, JAX 0.4.20+, NumPy, matplotlib. GPU optional (via `jax[cuda12]`).
 
@@ -61,8 +65,7 @@ pip install -e ".[cuda]"
 
 ```python
 import jax.numpy as jnp
-from core.graph import GraphState
-from core.category import sequential
+from cilib.core import GraphState, sequential
 
 # Define your state (JAX arrays, not numpy — JIT/vmap compatibility)
 state = GraphState(
@@ -100,23 +103,27 @@ python -m experiments.basin_stability.run_experiment --n_seeds 100 --vmap --plot
 
 ```
 collective-intelligence-library/
-├── core/                 # The framework itself
-│   ├── graph.py             # GraphState (JAX pytree, dynamic/static partition)
-│   ├── category.py          # @transform, sequential, parallel, conditional, identity
-│   ├── pipeline.py          # compile_pipeline: derive execution order from read/write DAG
-│   ├── schedule.py          # ScheduleEntry + make_scheduled_step (cadence as variable)
-│   └── environment.py       # Environment: lax.scan harness
-├── metrics/              # Composable metric families (economic / governance / graph)
-├── experiments/          # Worked examples and research experiments
-│   ├── basin_stability/     # Flagship: PDD/PRD/PLD vs adversarial pressure
-│   ├── fishing_commons/     # State factory + type contracts reference
-│   └── governed_harvest/    # Earlier harvest-extraction prototype
-├── plans/                # Design docs: ARCHITECTURE, NEXT_STEPS, experiment plans
-├── changelogs/           # Per-change notes (.md) + typeset TikZ figures (.tex/.pdf)
-└── Manifesto.md          # The "why" — long-form philosophical argument
+├── src/cilib/            # The installable library (import root: `cilib`)
+│   ├── core/                # GraphState, @transform, compile_pipeline, scan, schedule, protocols
+│   ├── agents/              # catalog: decision rules (Policy / PureAgent)
+│   ├── transformations/     # catalog: atomic state->state steps
+│   ├── mechanisms/          # catalog: composed institutions (market / network / democracy)
+│   ├── environments/        # catalog: runnable substrates (EnvSpec)
+│   ├── paradigms/           # composers: self-contained models (active_inference, polycentric)
+│   ├── analysis/  metrics/  # measurement: offline math + in-loop readouts
+│   └── execution/           # experiment-runner infra
+├── experiments/          # in-repo studies (import cilib; not part of the package)
+│   ├── basin_stability/     # PDD/PRD/PLD vs adversarial pressure
+│   ├── polycentric_emergence/  # causal-emergence study (newest)
+│   └── governed_harvest/    # earlier harvest-extraction prototype
+├── ARCHITECTURE.md  EXTENDING.md  CONTRIBUTING.md  CLAUDE.md   # the docs below
+├── plans/  changelogs/   # design docs + per-change notes
+└── Manifesto.md          # the "why" — long-form argument
 ```
 
-For your own simulation you'll primarily touch `core/` (state + composition), `metrics/` (instrumentation), and create a new folder under `experiments/`. The directory layout to copy is `basin_stability/`: `state.py` (`create_initial_state`), `policies.py` (pure vmappable functions), `transforms.py` (decorated transforms + `make_step_transform`), `environment.py` (subclass `Environment` + `run_batched`), `run_experiment.py` (sweep + CSV export).
+Each catalog's contents are a plain `REGISTRY` dict in its `__init__.py`. To build a
+simulation you select catalog entries, compile a pipeline, and sweep it — see
+[EXTENDING.md](EXTENDING.md) for the recipes and `experiments/_template/` for the shape.
 
 ## Core Concepts (5 Minutes)
 
@@ -149,7 +156,7 @@ def my_transform(state: GraphState) -> GraphState:
 Complex behaviors emerge from chaining simple transforms together. The `sequential` function composes multiple transforms into a pipeline:
 
 ```python
-from core.category import sequential
+from cilib.core import sequential
 
 pipeline = sequential(
     information_spread,

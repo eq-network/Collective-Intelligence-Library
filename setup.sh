@@ -1,5 +1,5 @@
 #!/bin/bash
-# Mycorrhiza — portable setup for any Linux machine
+# Collective Intelligence Library (CI Lib) — portable setup for any Linux machine
 # Usage: bash setup.sh [--cuda]
 #
 # Works on: HPC nodes, cloud VMs, WSL2, any Linux with Python 3.10+
@@ -12,7 +12,7 @@ for arg in "$@"; do
     esac
 done
 
-echo "=== Mycorrhiza Setup ==="
+echo "=== CI Lib Setup ==="
 
 # Create venv if it doesn't exist
 if [ ! -d ".venv" ]; then
@@ -53,7 +53,7 @@ echo "=== Smoke Test (10 steps, 2 seeds) ==="
 python -c "
 import sys; sys.path.insert(0, '.')
 from experiments.basin_stability.environment import run_batched
-from metrics import ECONOMIC_METRICS, GOVERNANCE_METRICS
+from cilib.metrics import ECONOMIC_METRICS, GOVERNANCE_METRICS
 import jax.random as jr
 import numpy as np
 
