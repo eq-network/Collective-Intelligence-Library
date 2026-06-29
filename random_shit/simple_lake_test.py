@@ -16,7 +16,7 @@ import jax.numpy as jnp
 from jax import random
 from typing import Dict, List
 
-from core import GraphState, initialize_graph_state
+from cilib.core import GraphState, initialize_graph_state
 
 # ============================================================================
 # SIMPLE AGENT POLICIES

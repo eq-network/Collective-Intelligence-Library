@@ -1,7 +1,7 @@
 """
 Governed Commons Harvest Environment.
 
-Composes through Mycorrhiza's core abstractions:
+Composes through Collective Intelligence Library's core abstractions:
 - GraphState for all state
 - Transform pipeline for stepping
 - Environment for lax.scan execution
@@ -11,7 +11,7 @@ Adapted from SocialJax Commons Harvest Open (Guo et al., 2025).
 import jax.numpy as jnp
 import jax.random as jr
 
-from core.environment import Environment
+from cilib.core.environment import Environment
 
 from .state import create_initial_state
 from .transforms import make_step_transform

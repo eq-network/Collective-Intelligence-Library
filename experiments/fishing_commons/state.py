@@ -1,14 +1,14 @@
 """
 GraphState factory for the fishing commons experiment.
 
-Maps the fishing CPR game onto Mycorrhiza's GraphState abstraction.
+Maps the fishing CPR game onto Collective Intelligence Library's GraphState abstraction.
 100 agents fish from a shared stock with logistic regrowth.
 """
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 
-from core.graph import GraphState
+from cilib.core.graph import GraphState
 
 
 DEFAULT_HARVEST_LEVELS = jnp.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0])

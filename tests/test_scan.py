@@ -16,9 +16,9 @@ import jax
 import jax.numpy as jnp
 from jax import random
 
-from core.graph import GraphState
-from core.scan import run_scan, run_scan_batch
-from core.category import gated, sequential
+from cilib.core.graph import GraphState
+from cilib.core.scan import run_scan, run_scan_batch
+from cilib.core.category import gated, sequential
 
 
 def _tiny_state(n=3, val=0.0):

@@ -30,8 +30,8 @@ import jax.random as jr
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from experiments.basin_stability.environment import BasinStabilityEnv, run_batched
-from metrics import ECONOMIC_METRICS, GOVERNANCE_METRICS
-from metrics.export import write_trajectory_csv, write_summary_csv, extract_metric_arrays
+from cilib.metrics import ECONOMIC_METRICS, GOVERNANCE_METRICS
+from cilib.metrics.export import write_trajectory_csv, write_summary_csv, extract_metric_arrays
 
 
 # Default metrics for this experiment: economic + governance

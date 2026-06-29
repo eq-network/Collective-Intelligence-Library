@@ -15,9 +15,9 @@ import jax
 import jax.numpy as jnp
 from jax import random
 
-from core.graph import GraphState
-from core.scan import run_scan, run_scan_batch
-from engine.transformations.bottom_up.vectorized_message_passing import (
+from cilib.core.graph import GraphState
+from cilib.core.scan import run_scan, run_scan_batch
+from cilib.transformations.vectorized_message_passing import (
     weighted_aggregate, row_normalize,
 )
 

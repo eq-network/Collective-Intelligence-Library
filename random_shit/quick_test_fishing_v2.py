@@ -15,7 +15,7 @@ import jax
 import jax.numpy as jnp
 from jax import random
 
-from core import GraphState, initialize_graph_state, get_observation
+from cilib.core import GraphState, initialize_graph_state, get_observation
 from agents import RandomPolicy
 
 print("=" * 80)

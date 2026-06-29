@@ -1,9 +1,9 @@
 [build-system]
 requires = ["setuptools>=68.0"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
-name = "mycorrhiza"
+name = "collective-intelligence-library"
 version = "0.1.0"
 description = "Composable mechanism simulation via functional graph transforms"
 requires-python = ">=3.10"
@@ -22,8 +22,6 @@ full = [
     "pandas>=2.0.0",
 ]
 
-[project.scripts]
-mycorrhiza-sweep = "experiments.basin_stability.run_experiment:main"
-
 [tool.setuptools.packages.find]
-include = ["core*", "experiments*", "metrics*"]
+where = ["src"]
+include = ["cilib*"]

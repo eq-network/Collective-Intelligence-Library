@@ -1,7 +1,7 @@
 """
 Basin Stability Environment.
 
-Composes through Mycorrhiza's core abstractions:
+Composes through Collective Intelligence Library's core abstractions:
 - GraphState for all state
 - Transform pipeline for stepping
 - Environment for lax.scan execution
@@ -12,7 +12,7 @@ import jax
 import jax.lax as lax
 import jax.random as jr
 
-from core.environment import Environment
+from cilib.core.environment import Environment
 
 from .state import create_initial_state
 from .transforms import make_step_transform

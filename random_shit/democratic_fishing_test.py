@@ -23,7 +23,7 @@ from jax import random
 from typing import Dict, List, Tuple, NamedTuple
 from dataclasses import dataclass
 
-from core import GraphState, initialize_graph_state, get_observation, Policy
+from cilib.core import GraphState, initialize_graph_state, get_observation, Policy
 
 # ============================================================================
 # PORTFOLIO DEFINITIONS (Extraction Policies)

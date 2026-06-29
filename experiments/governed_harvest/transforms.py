@@ -12,8 +12,8 @@ import jax.numpy as jnp
 import jax.random as jr
 from functools import partial
 
-from core.graph import GraphState
-from core.category import Transform, sequential
+from cilib.core.graph import GraphState
+from cilib.core.category import Transform, sequential
 
 from .policies import (
     bandit_harvest_policy,

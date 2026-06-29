@@ -1,7 +1,7 @@
 """
 GraphState factory for the basin stability experiment.
 
-Maps the proposal-selection resource game onto Mycorrhiza's GraphState.
+Maps the proposal-selection resource game onto Collective Intelligence Library's GraphState.
 N=20 agents, K=4 proposals/round, T=200 rounds, linear Q-learning.
 
 Paper: "Basin Stability of Democratic Mechanisms Under Adversarial Pressure"
@@ -9,7 +9,7 @@ Paper: "Basin Stability of Democratic Mechanisms Under Adversarial Pressure"
 import jax.numpy as jnp
 import jax.random as jr
 
-from core.graph import GraphState
+from cilib.core.graph import GraphState
 
 
 # Signal quality tiers: 30% low-noise, 40% medium, 30% high-noise

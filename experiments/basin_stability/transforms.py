@@ -16,8 +16,8 @@ import jax.numpy as jnp
 import jax.random as jr
 from functools import partial
 
-from core.graph import GraphState
-from core.category import Transform, sequential, conditional
+from cilib.core.graph import GraphState
+from cilib.core.category import Transform, sequential, conditional
 
 from .policies import (
     q_select_action,
@@ -416,7 +416,7 @@ def make_step_transform(mechanism: str = "pdd", metrics: dict = None) -> Transfo
     # Metrics transform goes BEFORE step_counter so it writes at the
     # current step index (0, 1, 2, ...) before the counter increments.
     if metrics:
-        from metrics.transform import make_metrics_transform
+        from cilib.metrics.transform import make_metrics_transform
         transforms.append(make_metrics_transform(metrics))
 
     transforms.append(step_counter_transform)

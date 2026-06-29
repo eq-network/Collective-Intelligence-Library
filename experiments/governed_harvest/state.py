@@ -1,13 +1,13 @@
 """
 GraphState factory for the governed commons harvest experiment.
 
-Maps CPR game state onto Mycorrhiza's GraphState abstraction so all
+Maps CPR game state onto Collective Intelligence Library's GraphState abstraction so all
 transforms operate on a single immutable pytree.
 """
 import jax.numpy as jnp
 import jax.random as jr
 
-from core.graph import GraphState
+from cilib.core.graph import GraphState
 
 
 # Default harvest levels: 0 through 5 (rebalanced from [0,2,4,6,8,10])

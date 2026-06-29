@@ -11,3 +11,8 @@ simulation_results/
 .pyc
 .claude/
 
+
+# build / run artifacts
+*.egg-info/
+experiments/**/results.json
+experiments/_template/*.png
