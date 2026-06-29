@@ -1,0 +1,59 @@
+==============================================================================
+ENDOGENOUS POLYCENTRIC GOVERNANCE AS CAUSAL EMERGENCE
+  N=16 agents, 4 sub-communities, T=200, seeds=12
+==============================================================================
+
+[1] MAS REPLICATION + EI-and-FIT  (heterogeneity=1.5)
+    governed/emergent sustains the commons that unenforced play collapses;
+    monocentric survives but trades FIT and has no institutional meso-structure.
+
+    regime        finalR  surv     fit  mesoEI  EI%ile respond
+    atomized         0.0     7  -1.519   0.000     nan   +0.00
+    monocentric    145.8   200  -1.058   0.024      97   +0.17
+    fixed_poly     143.8   200  -0.247   1.519     100   +1.00
+    endogenous     144.2   200  -0.228   1.512     100   +1.00
+
+    -> atomized collapses (tragedy); the rest survive (MAS result reproduced).
+    -> endogenous: high meso-EI privilege AND high fit AND high responsiveness
+       = co-maintains EI-and-fit; monocentric: low meso-EI, low fit, ~0 responsiveness
+       = one calcified setpoint that ignores sub-communities.
+
+[2] HEADLINE: the endogenous-minus-monocentric FIT gap grows with heterogeneity
+      het  fit_mono  fit_endo  fit_gap  EI_mono  EI_endo
+      0.0    -0.385    -0.343   +0.042    0.018    0.670
+      1.0    -0.790    -0.287   +0.504    0.018    1.405
+      2.0    -1.259    -0.301   +0.958    1.176    1.587
+    -> at het=0 the central quota fits fine (gap~0); the gap opens as sub-communities
+       diverge — the welfare cost of uniformity (Oates), measured.
+
+[3] LOAD-BEARING TEST (policer ablation): endogenous with monitoring ON vs OFF
+    monitoring ON : finalR=  144.2  fit=-0.228  mesoEI=1.512
+    monitoring OFF: finalR=    0.0  fit=-1.519  mesoEI=0.000
+    -> removing enforcement collapses survival AND fit AND the meso-structure together:
+       EI is load-bearing (it moves when the substantive mechanism is corrupted).
+
+[4] CAPTURE (exogenous hub-pull c on endogenous affiliation)
+        c  finalR     fit  maxShareEI  totalEI
+      0.0   144.2  -0.228       0.264    1.653
+      0.3   144.8  -0.261       0.309    1.483
+      0.6   147.6  -0.414       0.370    1.264
+      0.9   147.7  -0.419       0.374    1.267
+    -> rising capture concentrates the Shapley-EI attribution onto the hub block and
+       erodes fit, even while the commons can still survive: capture is a measured
+       consequence (a fit/attribution collapse), not a definition.
+
+==============================================================================
+RE-DESCRIPTION THROUGH THREE LENSES (the methodological contribution)
+==============================================================================
+  EI lens          : the emergent regime forms a causally-privileged institutional
+                     meso-scale (high mesoEI percentile) that monocentric lacks; the
+                     (EI,Fit) gap predicts the survival+fit ordering.
+  complexity lens  : endogenous = near-lumpable modular structure matched to sub-
+                     communities; monocentric = one blob (no sub-structure), low fit;
+                     atomized = collapsed basin.
+  active-inference : quota = institution's policy prior; monocentric = one over-precise
+                     central prior (high control, no responsiveness = calcification);
+                     endogenous = nested per-niche priors that track local conditions.
+  => a known MAS result (emergent/decentralized beats imposed top-down) recovered AND
+     mechanistically explained. EI certifies a controller exists; FIT certifies its
+     setpoint serves the governed. Polycentric co-maintains both.
