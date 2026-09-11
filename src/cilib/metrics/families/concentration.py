@@ -11,6 +11,7 @@ All functions are pure and stay in jnp (no ``float()``) for JIT/vmap compatibili
 import jax.numpy as jnp
 
 from cilib.core.graph import GraphState
+from cilib.metrics.identity import kind
 
 
 def gini_of(values):
@@ -49,11 +50,13 @@ def centralization_of(values):
     return jnp.where(total > 0, (max_share - 1.0 / n) / (1.0 - 1.0 / n), 0.0)
 
 
+@kind("concentration")
 def harvest_gini(state: GraphState):
     """Gini of per-agent last harvest. 0 = equal extraction."""
     return gini_of(state.node_attrs["last_harvest"])
 
 
+@kind("concentration")
 def harvest_hhi(state: GraphState):
     """HHI of per-agent last harvest. 1/N = equal extraction, 1 = one agent takes all."""
     return hhi_of(state.node_attrs["last_harvest"])

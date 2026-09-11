@@ -28,9 +28,11 @@ path lands, new environments and register entries stay in Later.
 - **Order of Next.** The horizon says run records (O0 + O1) first. The last working
   session (2026-09-10) asked for computation and agent-definition work first, to
   run larger experiments. Not resolved; the list below keeps the horizon's order.
-- **O1 scope.** Three ad-hoc manifest writers now exist (`experiments/gd_bundles`,
-  `experiments/library_explainer`, `experiments/perf_baseline`). The minimal O1 is
-  one writer that replaces them. Decide the scope before building.
+- **O1 scope.** Resolved 2026-09-11: one writer, `cilib.runs`, with the two fixture
+  exporters building on its manifest core and `perf_baseline` sharing only the
+  engine block (its output is a timing file, not an address). Still open: what
+  `assumption_audits` should leave behind, since it currently prints and nothing
+  durable exists to route.
 - **AI listening rows.** `ai_insularity` in `ledger_society` is a workaround for
   the frozen AI rows, not a resolution; letting them drift under the attachment
   kernel would make "who the AI attends to" endogenous. Needs its own equivalence
@@ -38,18 +40,7 @@ path lands, new environments and register entries stay in Later.
 
 ## Now
 
-- [ ] **O0 + O1: metric identity and the run store** — a metric gets a stable `id`,
-  a `kind` (share / concentration / rate / level / phase-corner) and a definition
-  hash; a run gets a manifest (env, config, mechanism set and schedules, seeds,
-  steps, git SHA, cilib version) and a timestamped run dir with an index, written by
-  one `RunRecord` writer that the benchmark harness, `assumption_audits`, the three
-  ad-hoc exporters above, and `examples/05` all go through. Manifests and scalar
-  series are small and belong in git; raw trajectories stay ignored. Design:
-  `docs/observability-design.md`. Must precede O2. #observability
-  *Claimed 2026-09-11, branch `run-records` (worktree `../cilib-records`). Scope,
-  fixed before building: O1 minimal. One `RunRecord` writer replacing the three
-  ad-hoc exporters; stable ids, kinds and definition hashes on the existing
-  metrics; no dashboard. Lands after `jit-boundary`, rebased onto it.*
+*(nothing claimed; pick from Next)*
 
 ## Next
 
@@ -214,6 +205,14 @@ not repo split.
 
 ## Done
 
+- [x] **O0 + O1: metric identity and the run store** (2026-09-11) — `@kind`
+  declarations and transitive definition hashes on every catalog and environment
+  metric (`cilib.metrics.identity`); one `cilib.runs` writer with a nested,
+  hash-verified address block, used by the benchmark CLI, `examples/05`, and both
+  fixture exporters; perf_baseline shares the engine block only. Kinds shipped as
+  share / concentration / rate / level / index. Red-team record and limits in
+  `docs/observability-design.md`; contract: `src/cilib/runs/README.md`.
+  `assumption_audits` still writes nothing and stays on the card's list. #observability
 - [x] **2026-09-10 Performance baseline** — `experiments/perf_baseline/`: compile
   costs two orders of magnitude more than running; the eager path recompiles every
   call; seeds are near free; dense ledgers grow at N^1.6 to N^1.8 past about 600

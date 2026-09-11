@@ -17,6 +17,9 @@ experiments/**/results.json
 experiments/**/dist-bundles/
 experiments/**/dist-tree/
 experiments/**/dist-fixtures/
+# run records: manifests and scalar series are committed, raw arrays inside them are not
+experiments/**/runs/**/*.npz
+examples/runs/
 experiments/_template/*.png
 
 # latex build artifacts

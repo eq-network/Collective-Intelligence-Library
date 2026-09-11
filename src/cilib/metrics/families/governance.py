@@ -7,8 +7,10 @@ Must NOT call float() — values stay as JAX arrays for JIT compatibility.
 import jax.numpy as jnp
 
 from cilib.core.graph import GraphState
+from cilib.metrics.identity import kind
 
 
+@kind("concentration")
 def delegation_gini(state: GraphState):
     """Gini coefficient of PLD delegation weights (trust column-sums).
 
@@ -24,6 +26,7 @@ def delegation_gini(state: GraphState):
     return (2 * jnp.sum(index * sorted_w) / (n * jnp.sum(sorted_w))) - (n + 1) / n
 
 
+@kind("share")
 def capture_rate(state: GraphState):
     """Fraction of PRD representatives that are adversarial."""
     rep_mask = state.node_attrs["rep_mask"]
@@ -33,6 +36,7 @@ def capture_rate(state: GraphState):
     return n_adv_reps / (n_reps + 1e-8)
 
 
+@kind("level")
 def voting_entropy(state: GraphState):
     """Shannon entropy of the vote distribution across proposals.
 
@@ -47,6 +51,7 @@ def voting_entropy(state: GraphState):
     return -jnp.sum(probs * log_probs)
 
 
+@kind("level")
 def selected_utility(state: GraphState):
     """True utility of the proposal selected by the mechanism."""
     proposals = state.global_attrs["proposals"]
@@ -54,6 +59,7 @@ def selected_utility(state: GraphState):
     return proposals[selected]
 
 
+@kind("level")
 def mean_trust(state: GraphState):
     """Mean pairwise trust score across all agents."""
     return jnp.mean(state.node_attrs["trust_scores"])

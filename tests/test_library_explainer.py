@@ -10,6 +10,7 @@ import os
 
 import pytest
 
+from cilib import runs
 from cilib.core.pipeline import get_execution_order
 from experiments.library_explainer import export as ex
 from experiments.library_explainer.config import CONDITIONS, ENV
@@ -47,7 +48,7 @@ def test_manifest_checksums_match_files(fixtures):
         "influence-curve.json", "graph-matrix.json",
         *(f"runs/{ENV}.{c}.json" for c in CONDITIONS)}
     for rel, digest in checksums.items():
-        assert ex._sha256_file(os.path.join(out, rel)) == digest, rel
+        assert runs.sha256_file(os.path.join(out, rel)) == digest, rel
 
 
 def test_subsets_rows_complete_and_bitmask_indexed(fixtures):

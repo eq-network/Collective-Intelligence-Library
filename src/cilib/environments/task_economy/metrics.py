@@ -10,6 +10,7 @@ endogenous adoption pausing — the readout the aggregate-CES model cannot produ
 from __future__ import annotations
 
 import jax.numpy as jnp
+from cilib.metrics.identity import kind
 
 
 def _labor_share_series(trace):
@@ -24,19 +25,24 @@ def _late(series):
 def make_metrics(cfg):
     """Trace -> scalar reductions (harness vmaps these over the seed axis)."""
 
+    @kind("share")
     def labor_share(trace):
         return jnp.mean(_late(_labor_share_series(trace)))
 
+    @kind("level")
     def wage_late(trace):
         return jnp.mean(_late(trace["wage"]))
 
+    @kind("share")
     def auto_share_final(trace):
         return trace["auto_share"][-1]
 
+    @kind("level")
     def adoption_gap_final(trace):
         """Capability minus adoption: > 0 means the economics declined the frontier."""
         return trace["beta_cap"][-1] - trace["auto_share"][-1]
 
+    @kind("share")
     def vendor_income_share(trace):
         total = jnp.sum(trace["last_reward"], axis=1)
         vendor = trace["last_reward"][:, -1]

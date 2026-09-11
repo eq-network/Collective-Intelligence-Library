@@ -42,3 +42,10 @@ def influence_preserved(treatment: np.ndarray, baseline: np.ndarray) -> float:
     if b >= 1.0 - 1e-9:
         return float("nan")
     return (t - b) / (1.0 - b)
+
+
+# metric identity (cilib.metrics.identity), declared by attribute because this
+# module imports nothing from the library. Not a share: negative when the
+# treatment scores below the baseline.
+influence_preserved.kind = "index"
+influence_preserved.version = 1

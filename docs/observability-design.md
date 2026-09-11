@@ -1,6 +1,10 @@
 # Observability & live-runner design — the state protocol
 
-Status: **design record, not yet built** (2026-07-28). Frame: the
+Status: design record (2026-07-28). **O0 and O1 built 2026-09-11** as
+`cilib/metrics/identity.py` and `cilib/runs/` (`src/cilib/runs/README.md`); the
+kind vocabulary shipped as share / concentration / rate / level / index, and the
+open question below on what a `Record` is was resolved as one design over its
+seeds. Serialize, edit, the runner and the rest stay unbuilt. Frame: the
 visualisation-and-observability design session and its strategy note. Maps onto
 the observability epic items **O0–O6**; this file refines them, it does not
 introduce a parallel scheme.
@@ -319,3 +323,54 @@ engine, one protocol.
   has quietly assumed a `Record` is a single address. That needs resolving
   before O1 is written, and the answer is probably that a condition is a set of
   addresses sharing a config with different keys.)
+
+## Red-team record, O0 + O1 (2026-09-11)
+
+Three independent adversarial passes (artifact, assumption, use) on the first
+implementation. Every attack that landed is listed with what changed; the ones
+that stand are recorded as limits.
+
+- **The definition hash covered only the metric's own text.** Halving `gini_of`
+  or widening `_late` moved `harvest_gini` and `human_origin_share` by 2x with
+  the hash, kind and version byte-identical. *Answer:* the hash now walks every
+  function and module constant the metric reaches by global name, closure cell
+  or default argument, recursively within the codebase; a test writes two modules
+  that differ only in a helper body and asserts the hashes differ. *Limit:* the
+  walk is by name, so a helper reached through a container or passed as an
+  argument is not seen; the config a closure captures is deliberately not part of
+  the definition, it is in the address.
+- **A version bump moved the hash**, because `inspect.getsource` includes the
+  decorator line, so version and hash were never independent evidence. *Answer:*
+  decorator lines are stripped before hashing.
+- **The manifest's own address was never verified**: `read` checksummed every
+  file except the manifest, so a hand-edited `T` passed. *Answer:* the address is
+  a nested block, `read` recomputes its hash and raises on mismatch.
+- **`write` checksummed the whole directory**, adopting leftovers from an earlier
+  run as provenance, and two exporters were given an `rmtree` that would delete
+  whatever `--out` pointed at. *Answer:* `write` checksums only the files it
+  wrote plus an explicit `include` list; the `rmtree` is gone; a record refuses to
+  overwrite an existing manifest unless asked.
+- **`git_dirty` looked only at `src/cilib`**, so uncommitted edits to the harness
+  that defines a run's conditions read as clean, and `git_rev` named whichever
+  checkout `sys.path` won. *Answer:* the dirty check runs over the whole
+  repository of the imported package, and the manifest records the `source`
+  directory so a worktree mismatch is visible. *Limit:* the revision is still that
+  of the imported package, not of the experiment script.
+- **Two exporters produced no comparable address**, and the benchmark's headline
+  columns (`influence_preserved`, `exercised_influence`) and its `env_overrides`
+  had no identity. *Answer:* both exporters spread their schema fields over the
+  shared manifest core, so every writer carries the same address block; the
+  benchmark record's overrides enter the address and both instruments carry ids.
+- **Kinds:** `money_drift` (a max relative deviation over the run) was declared a
+  rate and `voting_entropy` (bits) an index; both reclassified. Every share and
+  concentration metric was checked numerically over all environments; no range
+  violation found. *Open:* `kind` alone does not render a metric; the bundle
+  exporter still adds `direction` and a late window. Whether the vocabulary is
+  right is settled by O3, not here.
+- **Held where they looked:** seeds nest under `jax.random.split` so `n_seeds`
+  from `seed0` is a prefix-stable address (a JAX implementation detail, and
+  `jax_version` is in `engine`, outside the hash by design); the bootstrap is
+  seeded; nothing touches traced code or `global_attrs`; the view schemas accept
+  the added fields. *Standing limit:* `version=1` everywhere buys nothing until a
+  reader compares hashes across records; `experiments/gd_game/export.py` still
+  hashes its own way and is dead-end code.

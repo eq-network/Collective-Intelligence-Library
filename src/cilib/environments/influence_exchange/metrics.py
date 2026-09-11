@@ -20,6 +20,7 @@ from __future__ import annotations
 import jax.numpy as jnp
 
 from cilib.metrics.families.concentration import centralization_of, gini_of
+from cilib.metrics.identity import kind
 
 
 def _late(series):
@@ -29,15 +30,19 @@ def _late(series):
 def make_metrics(cfg):
     n_c = cfg.n_citizens
 
+    @kind("share")
     def human_influence_share(trace):
         return jnp.mean(jnp.sum(_late(trace["influence"])[:, :n_c], axis=1))
 
+    @kind("concentration")
     def influence_gini(trace):
         return gini_of(jnp.mean(_late(trace["influence"]), axis=0))
 
+    @kind("concentration")
     def centralization(trace):
         return centralization_of(jnp.mean(_late(trace["influence"]), axis=0))
 
+    @kind("level")
     def consensus_error(trace):
         return jnp.abs(jnp.mean(_late(trace["opinion"])[:, :n_c]))
 

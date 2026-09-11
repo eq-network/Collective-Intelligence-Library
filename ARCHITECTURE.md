@@ -91,10 +91,16 @@ experiments/                studies    (import lab.paradigms, lab.analysis, metr
 lab/analysis/               measurement — imports NOTHING from the library (offline)
 ```
 
-One sanctioned lateral edge among the catalogs: **environments may import agents.**
-Policies are *inputs* to games (`environments/game.py`: an open `GameSpec` is closed
-with a policy via `close(game, policy)`), so an environment builder may pull its
-default policy from the agents catalog. No other cross-catalog import exists.
+Two sanctioned lateral edges among the catalogs. **Environments may import
+agents:** policies are *inputs* to games (`environments/game.py`: an open `GameSpec`
+is closed with a policy via `close(game, policy)`), so an environment builder may
+pull its default policy from the agents catalog. **Environments may import
+`metrics.identity` and `metrics.reducers`:** a metric's definition belongs to its
+environment, its kind vocabulary and fold primitives to the metrics catalog. No
+other cross-catalog import exists.
+
+`runs/` sits beside the catalogs and is the library's only filesystem boundary
+(imports core and metrics; nothing imports it back).
 
 ## Where things live
 
@@ -102,6 +108,7 @@ default policy from the agents catalog. No other cross-catalog import exists.
 src/cilib/        the installable library (import root: `cilib`)
   core/           GraphState, Transform, @transform, compile_pipeline, scan, schedule, protocols
   agents/  transformations/  mechanisms/  environments/  metrics/    the catalogs
+  runs/           run records: manifest + checksummed files per run dir (effectful)
   lab/            research payload (no stability promise)
     paradigms/    active_inference, polycentric  (6-part contract)
     analysis/     effective information, causal emergence, bootstrap

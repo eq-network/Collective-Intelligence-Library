@@ -34,13 +34,13 @@ import datetime as _dt
 import json
 import os
 import platform
-import subprocess
 import time
 import traceback
 
 import jax
 import jax.random as jr
 
+from cilib import runs
 from cilib.environments import REGISTRY, make_env
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -87,20 +87,12 @@ def _n_nodes(env, key) -> int:
 
 
 def provenance() -> dict:
-    try:
-        rev = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"],
-                                      cwd=HERE, text=True).strip()
-    except Exception:
-        rev = "unknown"
+    """The shared engine block plus the machine facts a timing depends on."""
     return {
+        **runs.engine_info(),
         "date": _dt.date.today().isoformat(),
-        "git_rev": rev,
-        "jax": jax.__version__,
-        "backend": [str(d) for d in jax.devices()],
         "cpu_count": os.cpu_count(),
         "processor": platform.processor(),
-        "platform": platform.platform(),
-        "x64": bool(jax.config.jax_enable_x64),
         "compilation_cache_dir": jax.config.jax_compilation_cache_dir,
     }
 

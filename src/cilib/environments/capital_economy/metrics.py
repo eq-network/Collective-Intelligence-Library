@@ -14,6 +14,7 @@ Metrics for the Capital Economy — WP1's headline readouts.
 from __future__ import annotations
 
 import jax.numpy as jnp
+from cilib.metrics.identity import kind
 
 
 def _late(series):
@@ -58,15 +59,18 @@ def make_metrics(cfg):
             + jnp.sum(trace["pub_cap"][..., H:H + S], axis=-1)
         return own / jnp.maximum(own + human, 1e-8)
 
+    @kind("share")
     def ai_wealth_share(trace):
         return jnp.mean(_late(_ai_share(trace)))
 
+    @kind("share")
     def human_income_share(trace):
         hh = jnp.sum(trace["last_reward"][..., :H], axis=-1)
         own = jnp.sum(trace["wealth"][..., O0:], axis=-1)
         own_flow = jnp.diff(own, prepend=own[..., :1])
         return jnp.mean(_late(hh / jnp.maximum(hh + jnp.maximum(own_flow, 0.0), 1e-8)))
 
+    @kind("share")
     def human_sector_share(trace):
         # traced efficiency (not cfg.efficiency) so growth closures stay honest
         va = _vc * trace["gross_output"][..., H:O0]
@@ -77,15 +81,19 @@ def make_metrics(cfg):
             / jnp.maximum(jnp.sum(va, axis=-1), 1e-8)
         return jnp.mean(_late(h))
 
+    @kind("level")
     def output_late(trace):
         return jnp.mean(_late(jnp.sum(trace["gross_output"][..., H:H + S], axis=-1)))
 
+    @kind("level")
     def output_peak(trace):
         return jnp.max(jnp.sum(trace["gross_output"][..., H:H + S], axis=-1))
 
+    @kind("level")
     def capital_late(trace):
         return jnp.mean(_late(jnp.sum(trace["capital"][..., O0:], axis=-1)))
 
+    @kind("index")
     def money_drift(trace):
         m = money_series(trace, cfg)
         return jnp.max(jnp.abs(m - m[0])) / jnp.maximum(m[0], 1e-8)

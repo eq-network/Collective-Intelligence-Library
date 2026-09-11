@@ -24,6 +24,7 @@ like to live there" — but a claim about timing belongs in the journey window.
 from __future__ import annotations
 
 import jax.numpy as jnp
+from cilib.metrics.identity import kind
 
 
 def _late(series):
@@ -50,52 +51,66 @@ def make_metrics(cfg):
         sum over the human block — no renormalisation."""
         return jnp.mean(jnp.sum(window(trace_field)[:, :H], axis=1))
 
+    @kind("share")
     def human_income_share(trace):
         return _share(trace["last_income"])
 
+    @kind("share")
     def human_wealth_share(trace):
         return _share(trace["wealth"])
 
+    @kind("share")
     def human_attention_share(trace):
         return _rowsum_share(trace["listen_influence"])
 
+    @kind("share")
     def human_power_share(trace):
         return _rowsum_share(trace["influence"])
 
+    @kind("share")
     def composite(trace):
         return (human_income_share(trace) + human_attention_share(trace)
                 + human_power_share(trace)) / 3.0
 
     # --- the journey window: the same quantities over the whole run ----------
 
+    @kind("share")
     def journey_income_share(trace):
         return _share(trace["last_income"], _journey)
 
+    @kind("share")
     def journey_wealth_share(trace):
         return _share(trace["wealth"], _journey)
 
+    @kind("share")
     def journey_attention_share(trace):
         return _rowsum_share(trace["listen_influence"], _journey)
 
+    @kind("share")
     def journey_power_share(trace):
         return _rowsum_share(trace["influence"], _journey)
 
+    @kind("share")
     def journey_composite(trace):
         return (journey_income_share(trace) + journey_attention_share(trace)
                 + journey_power_share(trace)) / 3.0
 
+    @kind("level")
     def journey_enforcement(trace):
         return jnp.mean(_journey(trace["enforcement"]))
 
+    @kind("level")
     def belief_capture(trace):
         """Mean human belief, late — 0 = anchored at own signals, ->ai_belief_bias
         under capture (the WP2 percept-supply reading as one number)."""
         return jnp.mean(_late(trace["belief"])[:, :H])
 
+    @kind("level")
     def policy_median_gap(trace):
         median = jnp.median(trace["ideal"][0, :H])
         return jnp.abs(jnp.mean(_late(trace["policy_target"])) - median)
 
+    @kind("level")
     def enforcement_level(trace):
         return jnp.mean(_late(trace["enforcement"]))
 

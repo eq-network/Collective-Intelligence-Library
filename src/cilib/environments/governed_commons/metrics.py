@@ -21,27 +21,33 @@ from __future__ import annotations
 import jax.numpy as jnp
 
 from ..commons_metrics import gini
+from cilib.metrics.identity import kind
 
 
 def make_metrics(cfg):
+    @kind("share")
     def stock_pct(trace):
         """Final stock as a fraction of carrying capacity."""
         return trace["resource_level"][-1] / cfg.K_cap
 
+    @kind("level")
     def total_harvest(trace):
         """Total resource extracted by the group over the run."""
         return jnp.sum(trace["harvest"])
 
+    @kind("concentration")
     def harvest_gini(trace):
         """Gini over per-agent cumulative harvest (0 = equal extraction)."""
         return gini(jnp.sum(trace["harvest"], axis=0))
 
+    @kind("rate")
     def compliance_rate(trace):
         """Fraction of agent-steps at or under the quota. Trivially 1.0 for the
         undefended baseline (the target sits at K_cap and never binds)."""
         under = trace["harvest"] <= trace["policy_target"][:, None] + 1e-6
         return jnp.mean(under.astype(jnp.float32))
 
+    @kind("index")
     def influence_fidelity(trace):
         """How closely realized outcomes track the principals' asks (see module docstring)."""
         gap = jnp.abs(trace["harvest"] - trace["principal_pref"])

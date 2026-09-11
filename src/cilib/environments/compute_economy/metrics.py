@@ -17,6 +17,7 @@ from __future__ import annotations
 import jax.numpy as jnp
 
 from cilib.metrics.families.concentration import gini_of, hhi_of
+from cilib.metrics.identity import kind
 
 
 def _labor_share_series(trace, eps=1e-6):
@@ -27,32 +28,39 @@ def _labor_share_series(trace, eps=1e-6):
 def make_metrics(cfg):
     nh = cfg.n_households
 
+    @kind("level")
     def output(trace):
         """Final-tick production Y."""
         return trace["output"][-1]
 
+    @kind("level")
     def wage(trace):
         """Final-tick wage (marginal product of labor)."""
         return trace["wage"][-1]
 
+    @kind("share")
     def labor_share(trace):
         """Mean over the run of wage·L / Y — the dependence-decay curve's level."""
         return jnp.mean(_labor_share_series(trace))
 
+    @kind("share")
     def human_income_share(trace):
         """Mean over the run of households' share of total income."""
         human = jnp.sum(trace["last_reward"][:, :nh], axis=1)
         total = jnp.sum(trace["last_reward"], axis=1)
         return jnp.mean(human / jnp.maximum(total, 1e-6))
 
+    @kind("level")
     def compute_stock(trace):
         """Final-tick aggregate compute C."""
         return jnp.sum(trace["capital"][-1])
 
+    @kind("concentration")
     def income_gini(trace):
         """Gini over per-agent cumulative income (all N nodes — see module caveat)."""
         return gini_of(jnp.sum(trace["last_reward"], axis=0))
 
+    @kind("concentration")
     def income_hhi(trace):
         """HHI over per-agent cumulative income (all N nodes — see module caveat)."""
         return hhi_of(jnp.sum(trace["last_reward"], axis=0))

@@ -36,6 +36,7 @@ from cilib.environments.compute_economy import (
 from cilib.mechanisms import (
     QuotaVoteConfig, SanctionConfig, AIRevenueTaxConfig, OwnershipCapConfig,
 )
+from cilib.metrics.identity import kind
 
 from .config import RunSpec
 
@@ -57,6 +58,7 @@ ECONOMY_CONDITIONS = {
 }
 
 
+@kind("index")
 def _commons_influence(mechanisms, spec: RunSpec) -> np.ndarray:
     """(S,) exercised influence: responsiveness of per-capita harvest to a collective
     downward ask-shift from t=0 (delta stays inside the feasible region)."""
@@ -66,6 +68,7 @@ def _commons_influence(mechanisms, spec: RunSpec) -> np.ndarray:
         perturb_fn=shift_preferences, outcome_fn=per_capita_harvest))
 
 
+@kind("index")
 def _economy_labor_dependence(mechanisms, spec: RunSpec) -> np.ndarray:
     """(S,) labor dependence NOW: the causal static output elasticity of human labor
     after regimes have separated — d log(output) / d log(labor) over a short window

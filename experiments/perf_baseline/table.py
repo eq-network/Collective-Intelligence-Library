@@ -17,7 +17,8 @@ def load(name):
 
 def baseline_table(d):
     p = d["provenance"]
-    print(f"Measured {p['date']} at `{p['git_rev']}`, jax {p['jax']}, {p['backend'][0]}, "
+    jax_version = p.get("jax_version", p.get("jax"))   # files before 2026-09-11 carry "jax"
+    print(f"Measured {p['date']} at `{p['git_rev']}`, jax {jax_version}, {p['backend'][0]}, "
           f"{p['cpu_count']} cores, T={d['params']['T']}, best of {d['params']['repeats']}.\n")
     print("| env | N | eager call 1 | eager call 2 | jit call 1 | jit warm | compile | us/step | trace MB |")
     print("|---|---:|---:|---:|---:|---:|---:|---:|---:|")

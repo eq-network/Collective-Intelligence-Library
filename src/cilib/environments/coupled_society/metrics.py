@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+from cilib.metrics.identity import kind
 
 
 def _late(series):
@@ -47,25 +48,31 @@ def _domain_series(trace, n_humans):
 def make_metrics(cfg):
     H = cfg.n_humans
 
+    @kind("share")
     def labor_share(trace):
         """Factor share wage·L/Y — kept as the classical readout; blind to
         rents by construction (see _domain_series)."""
         labor_income = trace["wage"] * jnp.sum(trace["labor_supply"], axis=1)
         return jnp.mean(_late(labor_income / jnp.maximum(trace["output"], 1e-6)))
 
+    @kind("share")
     def human_income_share(trace):
         return jnp.mean(_late(_domain_series(trace, H)[0]))
 
+    @kind("share")
     def human_culture_share(trace):
         return jnp.mean(_late(_domain_series(trace, H)[1]))
 
+    @kind("share")
     def human_influence_share(trace):
         return jnp.mean(_late(_domain_series(trace, H)[2]))
 
+    @kind("share")
     def composite_human_share(trace):
         l, c, i = _domain_series(trace, H)
         return (jnp.mean(_late(l)) + jnp.mean(_late(c)) + jnp.mean(_late(i))) / 3.0
 
+    @kind("index")
     def correlated_decline(trace):
         l, c, i = _domain_series(trace, H)
 

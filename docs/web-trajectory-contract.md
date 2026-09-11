@@ -3,7 +3,9 @@
 Status: **v1.1, in use** (2026-07-24). Consumed by the eq-network playground
 (`eq-network/prototypes/playground.html`, later `src/components/lab/sim/`).
 Producer: `examples/05_export_trajectory.py`. Change this file and both sides
-together or not at all.
+together or not at all. Since 2026-09-11 the producer writes the payload as
+`trajectory.json` inside a `cilib.runs` record directory (manifest beside it);
+the payload schema is unchanged.
 
 v1.1 (2026-07-24): `adj` is no longer reserved — `value_contagion` (A3/C2) is
 the first network game and emits its static `friendship` matrix; new optional

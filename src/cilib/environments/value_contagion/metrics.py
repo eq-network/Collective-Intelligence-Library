@@ -24,6 +24,7 @@ from __future__ import annotations
 import jax.numpy as jnp
 
 from cilib.metrics.reducers import late_mean
+from cilib.metrics.identity import kind
 
 
 def _late(series):
@@ -33,6 +34,7 @@ def _late(series):
 def make_metrics(cfg):
     n_h = cfg.n_agents - cfg.n_ai
 
+    @kind("share")
     def human_origin_share(trace):
         """Fraction of human agents holding human-origin culture, late-run mean."""
         return jnp.mean(1.0 - _late(trace["culture"])[:, :n_h])
