@@ -38,10 +38,6 @@ path lands, new environments and register entries stay in Later.
 
 ## Now
 
-*(nothing claimed; pick from Next)*
-
-## Next
-
 - [ ] **O0 + O1: metric identity and the run store** — a metric gets a stable `id`,
   a `kind` (share / concentration / rate / level / phase-corner) and a definition
   hash; a run gets a manifest (env, config, mechanism set and schedules, seeds,
@@ -50,6 +46,13 @@ path lands, new environments and register entries stay in Later.
   ad-hoc exporters above, and `examples/05` all go through. Manifests and scalar
   series are small and belong in git; raw trajectories stay ignored. Design:
   `docs/observability-design.md`. Must precede O2. #observability
+  *Claimed 2026-09-11, branch `run-records` (worktree `../cilib-records`). Scope,
+  fixed before building: O1 minimal. One `RunRecord` writer replacing the three
+  ad-hoc exporters; stable ids, kinds and definition hashes on the existing
+  metrics; no dashboard. Lands after `jit-boundary`, rebased onto it.*
+
+## Next
+
 - [ ] **Performance, from the measured baseline** — three moves in cost order
   (`experiments/perf_baseline/README.md`): (1) `jit` at the `EnvSpec` boundary with
   static `n_steps`; the eager path recompiles every call, 0.3 to 0.9 s against a 1
