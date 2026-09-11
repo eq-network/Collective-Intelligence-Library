@@ -45,6 +45,7 @@ to armor the work. We are trying to build something.*
 
 | Task | Put it in / read first |
 |---|---|
+| what's next, or the status of any thread | `ROADMAP.md` — the single source of truth; a session that commits ends by moving its card there |
 | any engine code | `src/cilib/CLAUDE.md`, then the folder's README |
 | a decision rule | `src/cilib/agents/` — its README |
 | an atomic `state->state` step | `src/cilib/transformations/` — its README |
@@ -114,6 +115,7 @@ presence is not a reason to revive either route.*
 
 ## Verifying a change
 
+- Any commit → move its card in `ROADMAP.md` (Now / Next / Later / Done).
 - Behavior-preserving refactor → `python -m pytest -q` stays green.
 - A change to a paradigm's composition → assert the new pipeline is numerically
   identical to the old one for a fixed seed before deleting the old path.

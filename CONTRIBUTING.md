@@ -18,6 +18,9 @@ after a short conversation than after a long read. If you're interested in the i
 the direction, or collaborating — please reach out:
 [Jonas Hallgren](https://github.com/spiralling) · Uppsala University · `jonas@eq-network.org`
 
+Looking for something to do? [ROADMAP.md](ROADMAP.md) is the single source of truth
+for what comes next. Pick a card from Next or Later and open an issue naming it.
+
 ## The contribution path
 
 1. **Pick a catalog** — agents, transformations, mechanisms, environments (or a whole
