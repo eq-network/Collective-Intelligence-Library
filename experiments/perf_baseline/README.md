@@ -27,7 +27,7 @@ environment's default size, compiling the scan takes 0.3 to 0.9 s and running
 T=200 agree within noise for every environment, as expected for a `lax.scan`
 whose body is traced once.
 
-**2. The eager path recompiles on every call.** `EnvSpec.run` and `run_batch`
+**2. The eager path recompiles on every call.** *(Superseded 2026-09-11: `EnvSpec.run*` now compile once per program and cache it; see `docs/changelogs/2026-09-11_jit-boundary.md`. The measurement below describes the state before that change.)* `EnvSpec.run` and `run_batch`
 call `lax.scan` and `vmap` with no `jax.jit` around them, and a second eager
 call costs the same as the first (the `eager call 2` column equals `jit call 1`,
 not `jit warm`). This is how every test and every study calls the engine

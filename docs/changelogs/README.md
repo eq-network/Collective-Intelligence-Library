@@ -38,3 +38,9 @@ per change, the design record for this period lives in `docs/`:
 - **[2026-03-30_core-primitives.pdf](2026-03-30_core-primitives.pdf)** — TikZ diagrams: pytree partition, typed transforms, dependency DAG, schedule timeline, composition operators, type contracts, state structure
 - Sources: the matching `.tex` files (recompile with `pdflatex <file>.tex`, twice for the
   table of contents)
+
+## 2026-09-11: Compilation at the environment boundary
+
+| Changelog | File Changed | Summary |
+|-----------|-------------|---------|
+| [jit-boundary](2026-09-11_jit-boundary.md) | `environments/spec.py` | `run*` compile once per program and are cached on the spec; init stays eager (bit-identity); the old `run_batch` unbatched seed-constant leaves, now fixed |

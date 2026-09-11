@@ -19,17 +19,47 @@ bespoke run loop".
 ``run`` / ``run_batch`` are thin wrappers over ``core.scan`` — the *only* place execution lives —
 so the substrate code never touches the scan plumbing. Governance and measurement compose on top
 by wrapping ``round_fn`` and extending ``trace_fn`` / ``metrics``; the contract does not change.
+
+Compilation happens here, once per program. A bare ``lax.scan`` is compiled when it is called,
+and a second bare call compiles again: the perf baseline (``experiments/perf_baseline``) measured
+that repeat cost at 0.3 to 0.9 s against a 1 to 6 ms run. Each ``run*`` method therefore builds
+its scan under ``jax.jit`` with the static arguments (``n_steps``, ``n_seeds``) closed over, and
+keeps the compiled program on the spec, keyed by those statics plus the identity of the
+``trace_fn`` and reducers it closes over. A second call with the same key reuses the executable.
+Pass the same ``trace_fn`` object across calls to get that reuse; a fresh lambda per call is a
+fresh program.
+
+``init_fn`` deliberately runs op by op, outside the compiled program, and the initial state is
+passed in as an argument. Measured 2026-09-11 across the registry at default size: the scan
+compiles bit-identically to the bare path in every environment, but ``init_fn`` under ``jit``
+rounds differently in 8 of 11 (XLA fuses the initial-state arithmetic; up to 2e-6 absolute on
+float32 fields such as normalized preferences). Keeping init eager keeps ``run`` bit-identical
+to what the same call produced before compilation was added, and init is a one-off cost per
+call, not per step.
+
+The batch path changed by one detail, found by the same measurement. The old ``run_batch``
+traced ``init_fn`` and the scan under one ``vmap``, so any init leaf that did not depend on the
+seed (a recipe matrix, a starting stock) entered the scan *unbatched* and was broadcast inside
+it, and XLA accumulated those products in a different order than for a batched operand. In
+five environments (the economy family and ``ledger_society``) that moved results at float32
+rounding, and where a rounding difference crosses a discrete rule (a rewiring, an enforcement
+threshold) it grows. ``run_batch`` now passes every leaf with its seed axis, which is what
+per-seed ``run`` calls compute and what the batch was documented to equal. The old numbers are
+reproduced exactly by unbatching those leaves (``in_axes=None``), so the change is understood,
+not tolerated; batch results committed before 2026-09-11 for those five environments may
+differ from a rerun at the last float32 digit.
 """
 from __future__ import annotations
 
 import dataclasses
 from typing import Any, Callable, Dict, Optional, Tuple
 
+import jax
 import jax.random as jr
 
 from cilib.core.graph import GraphState
-from cilib.core.reduce import Reducer, run_scan_reduce, run_scan_reduce_batch
-from cilib.core.scan import run_scan, run_scan_batch, RoundFn, TraceFn
+from cilib.core.reduce import Reducer, run_scan_reduce
+from cilib.core.scan import run_scan, RoundFn, TraceFn
 
 
 # A metric here scores a *trajectory* (the stacked trace_fn output), not a single state — that is
@@ -48,6 +78,10 @@ class EnvSpec:
     round_fn: RoundFn
     trace_fn: Optional[TraceFn] = None
     metrics: Dict[str, MetricFn] = dataclasses.field(default_factory=dict)
+    # Compiled programs, keyed by (kind, n_steps, batched, trace_fn, reducers). Excluded from
+    # equality and repr; the dict is mutated in place, which a frozen dataclass permits.
+    _programs: Dict[Any, Any] = dataclasses.field(
+        default_factory=dict, compare=False, repr=False)
 
     def run(self, key: Any, n_steps: int,
             trace_fn: Optional[TraceFn] = None) -> Tuple[GraphState, Any]:
@@ -58,7 +92,7 @@ class EnvSpec:
         """
         tf = trace_fn if trace_fn is not None else self.trace_fn
         k_init, k_run = jr.split(key)
-        return run_scan(self.round_fn, self.init_fn(k_init), n_steps, k_run, trace_fn=tf)
+        return self._program("scan", n_steps, tf)(self.init_fn(k_init), k_run)
 
     def run_batch(self, key: Any, n_seeds: int, n_steps: int,
                   trace_fn: Optional[TraceFn] = None) -> Tuple[GraphState, Any]:
@@ -66,8 +100,9 @@ class EnvSpec:
         ``(n_seeds,)``; trace fields are shaped ``(n_seeds, n_steps, ...)``. Compiles to one
         ``vmap(scan(...))``."""
         tf = trace_fn if trace_fn is not None else self.trace_fn
-        keys = jr.split(key, n_seeds)
-        return run_scan_batch(self.round_fn, self.init_fn, n_steps, keys, trace_fn=tf)
+        k_init, k_run = jax.vmap(jr.split, out_axes=1)(jr.split(key, n_seeds))
+        return self._program("scan", n_steps, tf, batched=True)(
+            jax.vmap(self.init_fn)(k_init), k_run)
 
     def run_reduced(self, key: Any, n_steps: int, reducers: Dict[str, Reducer],
                     trace_fn: Optional[TraceFn] = None
@@ -94,8 +129,8 @@ class EnvSpec:
             ``(final_state, trace, reduced)``.
         """
         k_init, k_run = jr.split(key)
-        return run_scan_reduce(self.round_fn, self.init_fn(k_init), n_steps,
-                               k_run, reducers, trace_fn=trace_fn)
+        return self._program("reduce", n_steps, trace_fn, reducers=reducers)(
+            self.init_fn(k_init), k_run)
 
     def run_reduced_batch(self, key: Any, n_seeds: int, n_steps: int,
                           reducers: Dict[str, Reducer],
@@ -104,10 +139,47 @@ class EnvSpec:
         """``vmap``ped sweep with in-scan reduction. ``reduced[name]`` is shaped
         ``(n_seeds,)`` for a scalar metric — already the per-seed vector the
         benchmark harness bootstraps over, with no trajectory kept."""
-        keys = jr.split(key, n_seeds)
-        return run_scan_reduce_batch(self.round_fn, self.init_fn, n_steps, keys,
-                                     reducers, trace_fn=trace_fn)
+        k_init, k_run = jax.vmap(jr.split, out_axes=1)(jr.split(key, n_seeds))
+        return self._program("reduce", n_steps, trace_fn, reducers=reducers, batched=True)(
+            jax.vmap(self.init_fn)(k_init), k_run)
 
     def evaluate(self, trace: Any) -> Dict[str, Any]:
         """Score a trajectory (or batch of trajectories) with every metric in the suite."""
         return {name: fn(trace) for name, fn in self.metrics.items()}
+
+    # -- compilation ---------------------------------------------------------------------------
+
+    def _program(self, kind: str, n_steps: int, trace_fn: Optional[TraceFn],
+                 reducers: Optional[Dict[str, Reducer]] = None,
+                 batched: bool = False) -> Callable[[GraphState, Any], Any]:
+        """The compiled ``(init_state, run_key) -> result`` program for one call shape.
+
+        ``kind`` is ``"scan"`` (``run_scan``) or ``"reduce"`` (``run_scan_reduce``);
+        ``batched`` wraps it in ``vmap`` over a leading seed axis of both arguments.
+        The cache entry keeps a reference to the ``trace_fn`` and reducers it was
+        keyed on, so their ``id``s cannot be recycled by a later object and alias
+        a stale program.
+        """
+        items = tuple(sorted(reducers.items())) if reducers is not None else None
+        ident = (kind, int(n_steps), batched, id(trace_fn),
+                 None if items is None else tuple((n, id(r)) for n, r in items))
+        hit = self._programs.get(ident)
+        if hit is not None:
+            return hit[0]
+
+        round_fn = self.round_fn
+        if kind == "scan":
+            def one(state, key):
+                return run_scan(round_fn, state, n_steps, key, trace_fn=trace_fn)
+        elif kind == "reduce":
+            reducers_d = dict(items)
+
+            def one(state, key):
+                return run_scan_reduce(round_fn, state, n_steps, key, reducers_d,
+                                       trace_fn=trace_fn)
+        else:
+            raise ValueError(f"unknown program kind {kind!r}")
+
+        compiled = jax.jit(jax.vmap(one) if batched else one)
+        self._programs[ident] = (compiled, trace_fn, items)
+        return compiled

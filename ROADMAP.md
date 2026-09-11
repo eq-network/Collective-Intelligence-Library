@@ -38,7 +38,7 @@ path lands, new environments and register entries stay in Later.
 
 ## Now
 
-*(nothing claimed; pick from Next)*
+- [ ] **O0 + O1, minimal** (claimed 2026-09-11, branch `run-records`) — one `RunRecord` writer replacing the three ad-hoc exporters, `id` + `kind` + definition hash on the existing metrics. No dashboard, no O2. #observability
 
 ## Next
 
@@ -50,10 +50,9 @@ path lands, new environments and register entries stay in Later.
   ad-hoc exporters above, and `examples/05` all go through. Manifests and scalar
   series are small and belong in git; raw trajectories stay ignored. Design:
   `docs/observability-design.md`. Must precede O2. #observability
-- [ ] **Performance, from the measured baseline** — three moves in cost order
-  (`experiments/perf_baseline/README.md`): (1) `jit` at the `EnvSpec` boundary with
-  static `n_steps`; the eager path recompiles every call, 0.3 to 0.9 s against a 1
-  to 6 ms run; bit-identity test required. (2) Persistent compile cache for the test
+- [ ] **Performance, from the measured baseline** — remaining moves in cost order
+  (`experiments/perf_baseline/README.md`; move (1), jit at the boundary, landed
+  2026-09-11): (2) Persistent compile cache for the test
   suite, one config line, about 3x on cold repeats. (3) Structured or sparse
   adjacency for the ledger environments: from about 600 nodes the dense `(N, N)`
   ledgers grow at N^1.6 to N^1.8, and `capital_economy` pays the same because its
@@ -211,6 +210,7 @@ not repo split.
 
 ## Done
 
+- [x] **2026-09-11 jit at the `EnvSpec` boundary** — `run*` compile once per program and are cached on the spec; warm runs 40 to 80x faster than a bare repeat call. Two findings: `init_fn` under jit drifts (kept eager, `run` bit-identical), and the old `run_batch` passed seed-constant leaves unbatched, moving five environments at float32 rounding (fixed; old numbers reproduced and explained). `docs/changelogs/2026-09-11_jit-boundary.md`. Move (1) of the performance card. #performance
 - [x] **2026-09-10 Performance baseline** — `experiments/perf_baseline/`: compile
   costs two orders of magnitude more than running; the eager path recompiles every
   call; seeds are near free; dense ledgers grow at N^1.6 to N^1.8 past about 600
