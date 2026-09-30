@@ -109,7 +109,24 @@ def run_scan_reduce(
         value.
     """
     items = tuple(sorted(reducers.items()))       # deterministic carry ordering
+    init_accs = tuple(r.init(init_state, n_steps) for _, r in items)
+    final_state, final_accs, trace = run_scan_reduce_over(
+        round_fn, init_state, init_accs, jnp.arange(n_steps), key, items, n_steps, trace_fn)
+    reduced = {name: r.finalize(a, n_steps)
+               for a, (name, r) in zip(final_accs, items)}
+    return final_state, trace, reduced
 
+
+def run_scan_reduce_over(round_fn, init_state, init_accs, ts, key, items, n_steps,
+                         trace_fn=None):
+    """The scan of :func:`run_scan_reduce` alone: accumulators already built, not yet
+    finalized, step indices given. Returns ``(final_state, final_accs, trace)``.
+
+    Split out so ``EnvSpec.run_reduced`` can compile just the scan and keep
+    ``init`` / ``finalize`` eager, as ``core.scan.run_scan_over`` does for
+    ``run``: that is what keeps the compiled path bit-identical to this one.
+    ``items`` is the sorted ``((name, Reducer), ...)`` tuple.
+    """
     def body(carry, t):
         state, k, accs = carry
         k, step_key = random.split(k)
@@ -119,13 +136,9 @@ def run_scan_reduce(
         out = trace_fn(new_state) if trace_fn is not None else None
         return (new_state, k, accs), out
 
-    init_accs = tuple(r.init(init_state, n_steps) for _, r in items)
     (final_state, _, final_accs), trace = lax.scan(
-        body, (init_state, key, init_accs), jnp.arange(n_steps)
-    )
-    reduced = {name: r.finalize(a, n_steps)
-               for a, (name, r) in zip(final_accs, items)}
-    return final_state, trace, reduced
+        body, (init_state, key, init_accs), ts)
+    return final_state, final_accs, trace
 
 
 def run_scan_reduce_batch(

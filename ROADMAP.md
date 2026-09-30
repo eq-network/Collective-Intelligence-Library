@@ -35,6 +35,13 @@ path lands, new environments and register entries stay in Later.
   engine block (its output is a timing file, not an address). Still open: what
   `assumption_audits` should leave behind, since it currently prints and nothing
   durable exists to route.
+- **Should one seed of `run_batch` equal `run` bit for bit?** Today it does not in
+  6 of 11 default environments (up to 0.03 apart in `ledger_society` at T=50):
+  `vmap` scans seed-constant fields unbatched and the rounding difference crosses
+  discrete rules. Batching every field makes them equal but moves every batch
+  result already reported for those environments and stores the fixed matrices S
+  times. Kept as is on 2026-09-30 so no past number moves; the 2026-09-11 attempt
+  took the other side (`docs/changelogs/2026-09-30_compile-once.md`).
 - **AI listening rows.** `ai_insularity` in `ledger_society` is a workaround for
   the frozen AI rows, not a resolution; letting them drift under the attachment
   kernel would make "who the AI attends to" endogenous. Needs its own equivalence
@@ -63,12 +70,9 @@ path lands, new environments and register entries stay in Later.
 
 ## Next
 
-- [ ] **Performance, remaining moves** (`experiments/perf_baseline/README.md`;
-  moves 1 and 2 are Done). (a) `run_reduced` / `run_reduced_batch` onto the same
-  compile-once path as `run`; they still recompile every call, and the
-  `08_streaming_metrics` example that uses them is a quarter of the warm suite.
-  (b) Structured or sparse adjacency for the ledger environments: from about 600
-  nodes the dense `(N, N)`
+- [ ] **Performance, remaining move** (`experiments/perf_baseline/README.md`;
+  moves 1 and 2 are Done). Structured or sparse adjacency for the ledger
+  environments: from about 600 nodes the dense `(N, N)`
   ledgers grow at N^1.6 to N^1.8, and `capital_economy` pays the same because its
   6-sector recipe is stored padded to `(N, N)` and `distribute` rebuilds an `(N, N)`
   one-hot every tick; index the sector block as `(N, S)` first, bit-identity test
@@ -224,15 +228,17 @@ not repo split.
 
 ## Done
 
-- [x] **2026-09-30 Compile once per spec; compile cache for tests** — `EnvSpec.run`
-  / `run_batch` cache one program per spec and call signature: repeat calls 3 to
+- [x] **2026-09-30 Compile once per spec; compile cache for tests** — all four
+  `EnvSpec.run*` cache one program per spec and call signature: repeat calls 3 to
   73 ms instead of 0.19 to 1.35 s, bit-identical to the eager scan in every
   registered environment. A plain `jax.jit` was not (three causes: compiled init,
   batched fields vmap leaves unbatched, closed-over arrays folded as constants),
   all handled in `EnvSpec._compiled` and held by `tests/test_spec_jit.py`;
   red-teamed. Root `conftest.py` turns on the persistent compile cache: full suite
-  557 s to 200 s warm. Detail: `experiments/perf_baseline/README.md`. #performance
-  #engine
+  557 s to 200 s warm. Integrates the unmerged 2026-09-11 `jit-boundary` attempt
+  (its reduced-path coverage kept, its batch-number change not). Detail:
+  `experiments/perf_baseline/README.md`, `docs/changelogs/2026-09-30_compile-once.md`.
+  #performance #engine
 - [x] **2026-09-11 O0 + O1: metric identity and the run store** — `@kind`
   declarations and transitive definition hashes on every catalog and environment
   metric (`cilib.metrics.identity`); one `cilib.runs` writer with a nested,

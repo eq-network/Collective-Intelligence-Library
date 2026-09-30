@@ -28,6 +28,12 @@ per change, the design record for this period lives in `docs/`:
 | [model-register-design.md](../model-register-design.md) | The economy register: structural robustness, assumptions cards, forking |
 | [cultural-register-design.md](../cultural-register-design.md) | The cultural register: separation × persuasion, spectral metrics |
 
+## 2026-09-30: Compilation at the environment boundary
+
+| Changelog | File Changed | Summary |
+|-----------|-------------|---------|
+| [compile-once](2026-09-30_compile-once.md) | `environments/spec.py` | `run*` compile once per spec, bit-identical to the eager scan; three causes of drift and how each is avoided; the unmerged 2026-09-11 attempt |
+
 ## Visual Reference
 
 - **[2026-07-24_alpha-benchmark-suite.pdf](2026-07-24_alpha-benchmark-suite.pdf)** — the

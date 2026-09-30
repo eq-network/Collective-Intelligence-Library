@@ -121,9 +121,8 @@ CPU, T=200, persistent cache off unless stated.
   tests: 557 s before either change (379 tests), 552 s with compile-once
   alone, 268 s cold and 200 s warm with both. Compile-once barely moves the
   suite, as predicted above: most tests build a fresh environment.
-- **Not changed:** `run_reduced` / `run_reduced_batch` still recompile every
-  call. The `08_streaming_metrics` example (47 s, a quarter of the warm suite)
-  goes through them.
+- **`run_reduced` / `run_reduced_batch`** go through the same compiled path,
+  with reducer `init` / `finalize` kept eager for the same reason as `init_fn`.
 
 ## What we do not know yet
 

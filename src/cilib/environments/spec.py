@@ -17,11 +17,11 @@ bespoke run loop".
     }
 
 ``run`` / ``run_batch`` are thin wrappers over ``core.scan`` — the *only* place execution lives —
-so the substrate code never touches the scan plumbing. Both compile the scan once per spec and
-call signature, so repeat calls skip the compile, and every seed's trajectory stays bit-identical
-to the un-jitted path (``EnvSpec._compiled``, ``tests/test_spec_jit.py``). Governance and
-measurement compose on top by wrapping ``round_fn`` and extending ``trace_fn`` / ``metrics``; the
-contract does not change.
+so the substrate code never touches the scan plumbing. All four ``run*`` methods compile the scan
+once per spec and call signature, so repeat calls skip the compile, and every seed's trajectory
+stays bit-identical to the un-jitted path (``EnvSpec._compiled``, ``tests/test_spec_jit.py``).
+Governance and measurement compose on top by wrapping ``round_fn`` and extending ``trace_fn`` /
+``metrics``; the contract does not change.
 """
 from __future__ import annotations
 
@@ -35,7 +35,8 @@ import jax.numpy as jnp
 import jax.random as jr
 
 from cilib.core.graph import GraphState
-from cilib.core.reduce import Reducer, run_scan_reduce, run_scan_reduce_batch
+from cilib.core.reduce import (Reducer, run_scan_reduce, run_scan_reduce_batch,
+                               run_scan_reduce_over)
 from cilib.core.scan import run_scan, run_scan_batch, run_scan_over, RoundFn, TraceFn
 
 
@@ -61,7 +62,12 @@ class EnvSpec:
         """One rollout. Returns ``(final_state, trace)``; trace fields have leading axis ``n_steps``.
 
         ``key`` is split into independent init / run keys (the ``run_scan_batch`` convention) so a
-        single ``run`` and one seed of a ``run_batch`` produce the same trajectory for a given key.
+        single ``run`` and one seed of a ``run_batch`` start from the same state and draw the same
+        randomness, but they are not always the same trajectory. ``vmap`` scans a seed-constant
+        field (a fixed network) unbatched, XLA sums it in a different order, and the float32
+        difference can cross a discrete rule and grow: in 6 of 11 default environments the two
+        differ, by up to 0.03 in ``ledger_society`` at T=50 (measured 2026-09-30). This predates
+        compilation; ``run_batch`` keeps the old batch numbers rather than the per-seed ones.
         """
         tf = trace_fn if trace_fn is not None else self.trace_fn
         n_steps = operator.index(n_steps)
@@ -171,9 +177,21 @@ class EnvSpec:
         Returns:
             ``(final_state, trace, reduced)``.
         """
+        n_steps = operator.index(n_steps)
+        items = tuple(sorted(reducers.items()))
         k_init, k_run = jr.split(key)
-        return run_scan_reduce(self.round_fn, self.init_fn(k_init), n_steps,
-                               k_run, reducers, trace_fn=trace_fn)
+        state = self.init_fn(k_init)
+        accs = tuple(r.init(state, n_steps) for _, r in items)
+        if _traced((state, accs, k_run)):
+            return run_scan_reduce(self.round_fn, state, n_steps, k_run, reducers,
+                                   trace_fn=trace_fn)
+
+        def scan(state, accs, k_run, ts):
+            return run_scan_reduce_over(self.round_fn, state, accs, ts, k_run, items,
+                                        n_steps, trace_fn)
+        final_state, final_accs, trace = self._compiled(
+            "reduce", scan, (state, accs, k_run, jnp.arange(n_steps)), trace_fn, static=items)
+        return final_state, trace, _finalize(items, final_accs, n_steps)
 
     def run_reduced_batch(self, key: Any, n_seeds: int, n_steps: int,
                           reducers: Dict[str, Reducer],
@@ -182,23 +200,48 @@ class EnvSpec:
         """``vmap``ped sweep with in-scan reduction. ``reduced[name]`` is shaped
         ``(n_seeds,)`` for a scalar metric — already the per-seed vector the
         benchmark harness bootstraps over, with no trajectory kept."""
+        n_steps = operator.index(n_steps)
+        items = tuple(sorted(reducers.items()))
         keys = jr.split(key, n_seeds)
-        return run_scan_reduce_batch(self.round_fn, self.init_fn, n_steps, keys,
-                                     reducers, trace_fn=trace_fn)
+
+        def build(k):
+            state = self.init_fn(k)
+            return state, tuple(r.init(state, n_steps) for _, r in items)
+        batch = _init_batch(build, keys) if n_seeds and not _traced(keys) else None
+        if batch is None:
+            return run_scan_reduce_batch(self.round_fn, self.init_fn, n_steps, keys,
+                                         reducers, trace_fn=trace_fn)
+        leaves, treedef, axes, k_run = batch
+
+        def scan(leaves, k_run, ts):
+            def one(ls, k):
+                state, accs = jax.tree_util.tree_unflatten(treedef, ls)
+                return run_scan_reduce_over(self.round_fn, state, accs, ts, k, items,
+                                            n_steps, trace_fn)
+            return jax.vmap(one, in_axes=(list(axes), 0))(leaves, k_run)
+        final_states, final_accs, traces = self._compiled(
+            "reduce_batch", scan, (leaves, k_run, jnp.arange(n_steps)), trace_fn,
+            static=(items, treedef, axes))
+        return final_states, traces, jax.vmap(lambda a: _finalize(items, a, n_steps))(final_accs)
 
     def evaluate(self, trace: Any) -> Dict[str, Any]:
         """Score a trajectory (or batch of trajectories) with every metric in the suite."""
         return {name: fn(trace) for name, fn in self.metrics.items()}
 
 
+def _finalize(items, accs, n_steps):
+    return {name: r.finalize(a, n_steps) for a, (name, r) in zip(accs, items)}
+
+
 def _traced(tree) -> bool:
     """True inside a caller's ``jit`` / ``vmap`` / ``grad``: their trace compiles the whole
-    call, so ``run`` / ``run_batch`` take the old inline path and add no program of their own."""
+    call, so the ``run*`` methods take the old inline path and add no program of their own."""
     return any(isinstance(x, jax.core.Tracer) for x in jax.tree_util.tree_leaves(tree))
 
 
 def _init_batch(init_fn, keys):
-    """Per-seed initial states, built eagerly, in the layout ``run_scan_batch`` scans them.
+    """Per-seed initial states (or any per-seed pytree ``init_fn`` builds, such as a state
+    with its reducer accumulators), built eagerly, in the layout ``run_scan_batch`` scans them.
 
     Under an eager ``vmap``, a state field that does not depend on the key (a fixed
     network, a zeroed ledger) is not batched, and the scan is compiled with that

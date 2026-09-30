@@ -18,9 +18,12 @@ import numpy as np
 import pytest
 
 from cilib.core.graph import GraphState
+from cilib.core.reduce import run_scan_reduce, run_scan_reduce_batch
 from cilib.core.scan import run_scan, run_scan_batch
 from cilib.environments import list_envs, make_env
 from cilib.environments.spec import EnvSpec
+from cilib.environments.value_contagion import make_reducers
+from cilib.metrics.reducers import last, late_mean, running_var
 
 T, S = 20, 3
 
@@ -140,3 +143,31 @@ def test_copies_do_not_share_compiled_programs():
     final, _ = clone.run(jr.PRNGKey(0), T)
     _assert_bit_identical(final, env.init_fn(jr.split(jr.PRNGKey(0))[0]))
     _assert_bit_identical(copy.deepcopy(env).run(jr.PRNGKey(1), T), env.run(jr.PRNGKey(1), T))
+
+
+@pytest.mark.parametrize("kw", [{}, {"sparse_friendship": True}], ids=["dense", "sparse"])
+def test_reduced_paths_match_eager_bit_for_bit(kw):
+    env = make_env("value_contagion", **kw)
+    reducers = make_reducers(env.config)
+    key = jr.PRNGKey(4)
+    k_init, k_run = jr.split(key)
+    _assert_bit_identical(
+        env.run_reduced(key, T, reducers),
+        run_scan_reduce(env.round_fn, env.init_fn(k_init), T, k_run, reducers))
+    _assert_bit_identical(
+        env.run_reduced_batch(key, S, T, reducers),
+        run_scan_reduce_batch(env.round_fn, env.init_fn, T, jr.split(key, S), reducers))
+
+
+def test_reduced_paths_with_closed_over_config_arrays():
+    env = _toy()
+    readout = lambda s: s.node_attrs["x"]
+    reducers = {"late": late_mean(readout), "last": last(readout), "var": running_var(readout)}
+    key = jr.PRNGKey(5)
+    k_init, k_run = jr.split(key)
+    _assert_bit_identical(
+        env.run_reduced(key, T, reducers),
+        run_scan_reduce(env.round_fn, env.init_fn(k_init), T, k_run, reducers))
+    _assert_bit_identical(
+        env.run_reduced_batch(key, S, T, reducers),
+        run_scan_reduce_batch(env.round_fn, env.init_fn, T, jr.split(key, S), reducers))
