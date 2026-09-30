@@ -143,7 +143,8 @@ if __name__ == "__main__":
         parser.error(f"--condition must be one of {sorted(CONDITIONS[args.env])} for {args.env}")
     if args.smoke:
         args.T = 5
-        args.out = args.out or os.path.join(tempfile.gettempdir(), "cilib_export_smoke")
+        # A fresh dir per run: a record dir is write-once, so a fixed path fails the second time.
+        args.out = args.out or os.path.join(tempfile.mkdtemp(prefix="cilib_export_smoke_"), "record")
 
     manifest, payload = export(args.env, args.condition, args.T, args.seed)
     out = args.out or runs.run_dir(os.path.join(os.path.dirname(__file__), "runs"),
