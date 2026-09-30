@@ -32,3 +32,6 @@ experiments/_template/*.png
 
 # round-table / simulator-worlds session material (local research theater, never published)
 round-table/
+
+# JAX persistent compilation cache (conftest.py)
+.jax_cache/

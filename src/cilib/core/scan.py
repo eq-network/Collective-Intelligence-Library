@@ -70,6 +70,22 @@ def run_scan(
         output (leading axis = ``n_steps``), or ``None`` when ``trace_fn`` is
         ``None``.
     """
+    return run_scan_over(round_fn, init_state, jnp.arange(n_steps), key, trace_fn)
+
+
+def run_scan_over(
+    round_fn: RoundFn,
+    init_state: GraphState,
+    ts: jnp.ndarray,
+    key: Any,
+    trace_fn: Optional[TraceFn] = None,
+) -> Tuple[GraphState, Any]:
+    """:func:`run_scan` over given step indices ``ts`` instead of ``arange(n_steps)``.
+
+    Exists so a caller can hand ``ts`` to a compiled program as an input rather
+    than have it built inside, where XLA sees a constant and may fold arithmetic
+    on ``t`` differently from the eager scan (see ``EnvSpec._compiled``).
+    """
     def body(carry, t):
         state, k = carry
         k, step_key = random.split(k)
@@ -77,9 +93,7 @@ def run_scan(
         out = trace_fn(new_state) if trace_fn is not None else None
         return (new_state, k), out
 
-    (final_state, _), trace = lax.scan(
-        body, (init_state, key), jnp.arange(n_steps)
-    )
+    (final_state, _), trace = lax.scan(body, (init_state, key), ts)
     return final_state, trace
 
 

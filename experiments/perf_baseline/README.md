@@ -12,6 +12,7 @@ python -m experiments.perf_baseline.run --envs ledger_society influence_exchange
     delegative_polity capital_economy value_contagion --scaling --mults 1 8 32 64 \
     --seeds 1 32 --out experiments/perf_baseline/scaling-large.json
 python -m experiments.perf_baseline.cache_probe [cache_dir]   # run three times, see docstring
+python -m experiments.perf_baseline.repeat_calls              # compile-once, after 2026-09-30
 python -m experiments.perf_baseline.table [file.json]         # the tables below
 ```
 
@@ -91,6 +92,38 @@ and the row-stochastic attachment kernel, not the scan.
 - **The trajectory is still the memory wall at scale.** At these sizes the
   default trace is under 1 MB; at 10,000 agents and T=2000 it is the O(T x N)
   object CLAUDE.md names, and the reducer path exists for it.
+
+## Done since: compile once per spec, compile cache for tests (2026-09-30)
+
+The first two moves above, landed on top of `b7f2d2d`. Same machine, jax 0.9.0,
+CPU, T=200, persistent cache off unless stated.
+
+- **`EnvSpec.run` / `run_batch` compile once per spec**
+  (`python -m experiments.perf_baseline.repeat_calls`, all 13 environments). A
+  repeat call with a new key went from 0.19 to 0.86 s (eager, recompiling) to 3
+  to 15 ms; a repeat 8-seed batch from 0.25 to 1.35 s to 14 to 73 ms. A first
+  `run` costs what an eager call did; a first `run_batch` costs 0.94 to 1.57
+  times one, the price of tracing the program once more to lift its constants
+  out (below). A loop of K calls on one spec breaks even at K = 2.
+- **Bit-identical, by construction and by test.** A plain `jax.jit` around
+  `run` was not: it changed float32 bits in 10 of 13 environments, from three
+  separate causes, each now avoided in `EnvSpec._compiled`: (1) a compiled
+  `init_fn` fuses and rounds differently (9 of 13), so init stays eager;
+  (2) state fields `vmap` leaves unbatched were batched, which compiles a
+  different program, so each field's batching is carried over; (3) arrays a
+  `round_fn` closes over became constants that XLA folds with host libm, so
+  they are passed as runtime arguments as the eager scan did. (3) does not
+  occur in any registered default config and was found by the red-team pass;
+  `tests/test_spec_jit.py` holds a model where it does (a plain jit differs in
+  1391 elements, the compiled path in 0).
+- **Persistent compile cache for the test suite** (root `conftest.py`,
+  `.jax_cache/`, gitignored, about 60 MB after two runs). Full suite, 413
+  tests: 557 s before either change (379 tests), 552 s with compile-once
+  alone, 268 s cold and 200 s warm with both. Compile-once barely moves the
+  suite, as predicted above: most tests build a fresh environment.
+- **Not changed:** `run_reduced` / `run_reduced_batch` still recompile every
+  call. The `08_streaming_metrics` example (47 s, a quarter of the warm suite)
+  goes through them.
 
 ## What we do not know yet
 

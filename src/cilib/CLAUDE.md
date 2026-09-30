@@ -14,6 +14,11 @@ JAX/state specifics that prevent real failures.
 - **Pure tier vs eager tier.** Pure (`core.scan`) is the default and the only tier
   that `vmap`s over seeds. Use the eager tier (`core.time`) *only* for genuinely
   effectful agents (LLM/HTTP).
+- **`EnvSpec.run` / `run_batch` compile once per spec.** Reuse the spec in a loop;
+  a fresh `make_env` or a fresh `trace_fn` lambda per call is a fresh compile. The
+  compiled program keeps whatever Python state `round_fn` read at first call, so
+  closed-over config must be immutable. Numbers are bit-identical to the eager
+  scan by construction (`EnvSpec._compiled`); keep `tests/test_spec_jit.py` exact.
 - **Transforms declare `.reads` / `.writes`** via `@transform` so `compile_pipeline`
   can derive order. Same-family mechanisms keep disjoint writes.
 - **The trajectory is the memory ceiling, not the state.** Raw per-agent traces cost

@@ -27,7 +27,9 @@ path lands, new environments and register entries stay in Later.
 
 - **Order of Next.** The horizon says run records (O0 + O1) first. The last working
   session (2026-09-10) asked for computation and agent-definition work first, to
-  run larger experiments. Not resolved; the list below keeps the horizon's order.
+  run larger experiments. 2026-09-30: Jonas again chose core and compute work
+  first (the compile-once move landed). Not formally resolved; the list below
+  keeps the horizon's order.
 - **O1 scope.** Three ad-hoc manifest writers now exist (`experiments/gd_bundles`,
   `experiments/library_explainer`, `experiments/perf_baseline`). The minimal O1 is
   one writer that replaces them. Decide the scope before building.
@@ -38,7 +40,24 @@ path lands, new environments and register entries stay in Later.
 
 ## Now
 
-*(nothing claimed; pick from Next)*
+- [ ] **WP4 `delegated_judgment` — read-through and red-team before commit**
+  (built 2026-09-15, untracked). Env + `myopic_delegation` policy + 15-rung
+  ladder + `experiments/wp4_oversight/` (results.json, figures into the vault
+  paper `papers/wp4-oversight/`) + bundle `delegated-judgment-erosion-v1`
+  (3 expectations pass; exported; copied to eq-network
+  `apps/site/public/lab/runs/`, replayed by `/showcase/judgment`). Owed: Jonas
+  read-through of the paper and card; `/red-team` on the model design;
+  `%% VERIFY` the memory-written bib; the E4 miss (pooling moves delegation
+  too, through the belief) stays reported as found. #wp4 #claim-discipline
+- [ ] **`compute_supply`: step-by-step Leontief compute supply chain** (built
+  2026-09-23, untracked). Pichler-style orders, input stocks and proportional
+  rationing, as a background world component with no agents; stylized uniform
+  coefficients, so only the network structure is claimed. Built ahead of O0/O1
+  by Jonas's call 2026-09-23, overriding the Direction's "new environments stay
+  in Later". Owed: `/red-team` on the model design; a sourced calibration card;
+  a check against Pichler's published runs of the upstream order leak and the
+  post-shock lock-in, where stocks never refill at zero spare capacity (card
+  field 4). #economy #world
 
 ## Next
 
@@ -50,12 +69,12 @@ path lands, new environments and register entries stay in Later.
   ad-hoc exporters above, and `examples/05` all go through. Manifests and scalar
   series are small and belong in git; raw trajectories stay ignored. Design:
   `docs/observability-design.md`. Must precede O2. #observability
-- [ ] **Performance, from the measured baseline** — three moves in cost order
-  (`experiments/perf_baseline/README.md`): (1) `jit` at the `EnvSpec` boundary with
-  static `n_steps`; the eager path recompiles every call, 0.3 to 0.9 s against a 1
-  to 6 ms run; bit-identity test required. (2) Persistent compile cache for the test
-  suite, one config line, about 3x on cold repeats. (3) Structured or sparse
-  adjacency for the ledger environments: from about 600 nodes the dense `(N, N)`
+- [ ] **Performance, remaining moves** (`experiments/perf_baseline/README.md`;
+  moves 1 and 2 are Done). (a) `run_reduced` / `run_reduced_batch` onto the same
+  compile-once path as `run`; they still recompile every call, and the
+  `08_streaming_metrics` example that uses them is a quarter of the warm suite.
+  (b) Structured or sparse adjacency for the ledger environments: from about 600
+  nodes the dense `(N, N)`
   ledgers grow at N^1.6 to N^1.8, and `capital_economy` pays the same because its
   6-sector recipe is stored padded to `(N, N)` and `distribute` rebuilds an `(N, N)`
   one-hot every tick; index the sector block as `(N, S)` first, bit-identity test
@@ -211,6 +230,15 @@ not repo split.
 
 ## Done
 
+- [x] **2026-09-30 Compile once per spec; compile cache for tests** — `EnvSpec.run`
+  / `run_batch` cache one program per spec and call signature: repeat calls 3 to
+  73 ms instead of 0.19 to 1.35 s, bit-identical to the eager scan in every
+  registered environment. A plain `jax.jit` was not (three causes: compiled init,
+  batched fields vmap leaves unbatched, closed-over arrays folded as constants),
+  all handled in `EnvSpec._compiled` and held by `tests/test_spec_jit.py`;
+  red-teamed. Root `conftest.py` turns on the persistent compile cache: full suite
+  557 s to 200 s warm. Detail: `experiments/perf_baseline/README.md`. #performance
+  #engine
 - [x] **2026-09-10 Performance baseline** — `experiments/perf_baseline/`: compile
   costs two orders of magnitude more than running; the eager path recompiles every
   call; seeds are near free; dense ledgers grow at N^1.6 to N^1.8 past about 600
