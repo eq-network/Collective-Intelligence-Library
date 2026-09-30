@@ -11,11 +11,13 @@ from __future__ import annotations
 import jax.numpy as jnp
 
 from ..commons_metrics import gini
+from cilib.metrics.identity import kind
 
 
 def make_metrics(cfg):
     collapse_threshold = 1.0  # commons "dead" when fewer than ~1 apple remains
 
+    @kind("level")
     def survival_time(trace):
         """Steps the commons stays viable before the apple stock collapses (full horizon if never)."""
         apples = trace["apples_total"]                     # (T,)
@@ -23,14 +25,17 @@ def make_metrics(cfg):
         first_dead = jnp.argmax(~alive)
         return jnp.where(jnp.all(alive), apples.shape[-1], first_dead)
 
+    @kind("level")
     def total_gain(trace):
         """Total apples harvested by the group over the run."""
         return jnp.sum(trace["harvest"])
 
+    @kind("index")
     def equality(trace):
         """1 - Gini over per-agent cumulative harvest (1.0 = perfectly equal)."""
         return 1.0 - gini(jnp.sum(trace["harvest"], axis=0))
 
+    @kind("level")
     def final_apples(trace):
         """Apple stock at the end of the run."""
         return trace["apples_total"][-1]

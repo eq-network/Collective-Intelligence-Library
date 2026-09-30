@@ -26,6 +26,7 @@ from __future__ import annotations
 import jax.numpy as jnp
 
 from cilib.metrics.families.concentration import centralization_of, gini_of
+from cilib.metrics.identity import kind
 
 
 def _late(series):
@@ -35,29 +36,37 @@ def _late(series):
 def make_metrics(cfg):
     n_c = cfg.n_citizens
 
+    @kind("share")
     def human_power_share(trace):
         return jnp.mean(jnp.sum(_late(trace["influence"])[:, :n_c], axis=1))
 
+    @kind("concentration")
     def influence_gini(trace):
         return gini_of(jnp.mean(_late(trace["influence"]), axis=0))
 
+    @kind("concentration")
     def centralization(trace):
         return centralization_of(jnp.mean(_late(trace["influence"]), axis=0))
 
+    @kind("concentration")
     def top_delegate_share(trace):
         v = _late(trace["influence"])
         return jnp.mean(jnp.max(v, axis=1) / jnp.maximum(jnp.sum(v, axis=1), 1e-12))
 
+    @kind("level")
     def policy_median_gap(trace):
         median = jnp.median(trace["ideal"][0, :n_c])
         return jnp.abs(jnp.mean(_late(trace["policy_target"])) - median)
 
+    @kind("level")
     def decision_quality(trace):
         return jnp.abs(jnp.mean(_late(trace["policy_target"])) - cfg.true_rate)
 
+    @kind("level")
     def enforcement_level(trace):
         return jnp.mean(_late(trace["enforcement"]))
 
+    @kind("concentration")
     def wealth_gini(trace):
         return gini_of(trace["wealth"][-1, :n_c])
 

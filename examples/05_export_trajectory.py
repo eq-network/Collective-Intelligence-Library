@@ -11,18 +11,22 @@ Used for parity fixtures against the browser port and, later, as StaticEngine
 payloads for published-run replays. Not a study (no sweep, no CIs) — for that,
 see experiments/benchmark/.
 
+The payload lands as ``trajectory.json`` inside a run record (``cilib.runs``):
+a directory with a ``manifest.json`` carrying the address (env, config,
+mechanisms and schedules, T, seed), metric ids, engine and checksums.
+
     python examples/05_export_trajectory.py --env governed_commons --T 500
     python examples/05_export_trajectory.py --env compute_economy \
-        --condition tax_and_ownership_cap --T 500 --out econ.json
+        --condition tax_and_ownership_cap --T 500 --out runs/econ
 """
 import argparse
 import dataclasses
-import json
 import os
 import tempfile
 
 import jax.random as jr
 
+from cilib import runs
 from cilib.core.schedule import ScheduleSpec, apply_schedule
 from cilib.environments import (
     compute_economy, coupled_society, governed_commons, influence_exchange,
@@ -95,7 +99,8 @@ ENV_MODULES = {
 }
 
 
-def export(env_name: str, condition: str, n_steps: int, seed: int) -> dict:
+def export(env_name: str, condition: str, n_steps: int, seed: int) -> tuple:
+    """One rollout as ``(manifest, payload)``: the record's address and the contract JSON."""
     cond = CONDITIONS[env_name][condition]
     triples, overrides = (cond.get("mechanisms", []), cond.get("overrides", {})) \
         if isinstance(cond, dict) else (cond, {})
@@ -112,10 +117,15 @@ def export(env_name: str, condition: str, n_steps: int, seed: int) -> dict:
 
     # the generic mapping lives in cilib.environments.webexport (shared with the
     # sweep-bundle exporter); defaults here reproduce the historical output
-    return trajectory_payload(
+    payload = trajectory_payload(
         trace, finals, game_id=env_name, n_steps=n_steps, seed=seed,
         params={**dataclasses.asdict(env.config), "condition": condition},
         scalars=env.evaluate(trace), system=system)
+    manifest = runs.manifest(env=env_name, config=env.config, T=n_steps, seed0=seed,
+                             n_seeds=1, kind="trajectory", mechanisms=triples,
+                             overrides=overrides, metrics=env.metrics,
+                             notes=f"condition {condition}")
+    return manifest, payload
 
 
 if __name__ == "__main__":
@@ -124,7 +134,8 @@ if __name__ == "__main__":
     parser.add_argument("--condition", default="baseline")
     parser.add_argument("--T", type=int, default=500)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--out", default=None, help="output path (default: <env>_<condition>_s<seed>.json)")
+    parser.add_argument("--out", default=None,
+                        help="record directory (default: examples/runs/<stamp>_<env>_<condition>_s<seed>)")
     parser.add_argument("--smoke", action="store_true", help="tiny run for tests")
     args = parser.parse_args()
 
@@ -132,12 +143,12 @@ if __name__ == "__main__":
         parser.error(f"--condition must be one of {sorted(CONDITIONS[args.env])} for {args.env}")
     if args.smoke:
         args.T = 5
-        args.out = args.out or os.path.join(tempfile.gettempdir(),
-                                            "cilib_export_smoke.json")
+        args.out = args.out or os.path.join(tempfile.gettempdir(), "cilib_export_smoke")
 
-    payload = export(args.env, args.condition, args.T, args.seed)
-    out = args.out or f"{args.env}_{args.condition}_s{args.seed}.json"
-    with open(out, "w") as f:
-        json.dump(payload, f)
+    manifest, payload = export(args.env, args.condition, args.T, args.seed)
+    out = args.out or runs.run_dir(os.path.join(os.path.dirname(__file__), "runs"),
+                                   f"{args.env}_{args.condition}_s{args.seed}",
+                                   manifest["created"])
+    runs.write(out, manifest, files={"trajectory.json": payload})
     scalars = "  ".join(f"{k}={v:.3f}" for k, v in payload["meta"]["scalars"].items())
     print(f"wrote {out}  (T={args.T}, N={payload['meta']['N']})\n{scalars}")

@@ -23,6 +23,7 @@ All functions stay in jnp (``jnp.linalg.eigh`` traces and vmaps).
 import jax.numpy as jnp
 
 from cilib.core.graph import GraphState
+from cilib.metrics.identity import kind
 
 
 def fiedler_partition_alignment_of(W, types):
@@ -50,6 +51,7 @@ def fiedler_partition_alignment_of(W, types):
     return jnp.abs(n11 * n00 - n10 * n01) / jnp.maximum(den, 1e-8)
 
 
+@kind("index")
 def fiedler_partition_alignment(state: GraphState, adj_key: str = "friendship"):
     """GraphState binding: alignment of the agent graph's Fiedler split with
     ``node_types`` (the human/AI boundary). ``friendship`` is the agent-graph

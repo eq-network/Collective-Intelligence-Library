@@ -1,4 +1,8 @@
-"""CLI: run a benchmark scenario, print the scorecard, write it as JSON.
+"""CLI: run a benchmark scenario, print the scorecard, write it as a run record.
+
+Each run leaves ``runs/<UTC stamp>_<scenario>/`` with ``manifest.json`` (env, config,
+conditions and schedules, seeds, horizon, metric ids, engine) and ``scorecard.json``.
+Records are small and belong in git.
 
     python -m experiments.benchmark.run                                # commons, full
     python -m experiments.benchmark.run --scenario compute_economy     # the economy
@@ -7,14 +11,18 @@
 from __future__ import annotations
 
 import argparse
-import json
 import pathlib
-from datetime import datetime
+import tempfile
+
+from cilib import runs
+from cilib.environments import make_env
+
+from cilib.lab.analysis.influence import influence_preserved
 
 from .harness import run_benchmark
 from .scenarios import SCENARIOS
 
-RESULTS_DIR = pathlib.Path(__file__).parent / "results"
+RUNS_DIR = pathlib.Path(__file__).parent / "runs"
 
 
 def print_scorecard(scorecard: dict) -> None:
@@ -53,9 +61,19 @@ def main() -> None:
                               seed=args.seed)
     print_scorecard(scorecard)
 
-    RESULTS_DIR.mkdir(exist_ok=True)
-    out = RESULTS_DIR / f"scorecard_{args.scenario}_{datetime.now():%Y%m%d_%H%M%S}.json"
-    out.write_text(json.dumps(scorecard, indent=2))
+    scn = SCENARIOS[args.scenario]
+    overrides = scorecard["meta"]["env_overrides"]
+    env = make_env(scn.env_name, **overrides)
+    # the two headline columns are instruments, not trace metrics; they get ids too
+    metrics = {**env.metrics, "exercised_influence": scn.influence_fn,
+               "influence_preserved": influence_preserved}
+    m = runs.manifest(env=scn.env_name, config=env.config, overrides=overrides,
+                      T=scorecard["meta"]["T"], seed0=args.seed, n_seeds=n_seeds,
+                      kind="scorecard", conditions=scn.conditions, metrics=metrics,
+                      notes=f"benchmark scenario {args.scenario}")
+    root = pathlib.Path(tempfile.gettempdir()) / "benchmark_smoke" if args.smoke else RUNS_DIR
+    out = runs.write(runs.run_dir(root, args.scenario, m["created"]), m,
+                     files={"scorecard.json": scorecard})
     print(f"\nwrote {out}")
 
 

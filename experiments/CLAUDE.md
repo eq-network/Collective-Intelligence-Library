@@ -13,7 +13,8 @@ is in `README.md` here.
   A claim is resolved (CI excludes zero) or reported as unresolved — no magic seed
   counts, no point estimates traveling without error bars.
 - **Raw trajectories stay out of git** (`results/` is gitignored); manifests and
-  scalar series are small and belong in.
+  scalar series are small and belong in. Write them through `cilib.runs`: one
+  record dir per run, manifest last with checksums, never an ad-hoc JSON.
 - **Mechanisms attach as (mechanism, config, ScheduleSpec) triples.** Timing is
   part of the experimental design, never the mechanism's code.
 - Prose in study READMEs follows `docs/CLAUDE.md`.

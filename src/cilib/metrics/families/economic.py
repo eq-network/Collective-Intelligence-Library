@@ -7,13 +7,16 @@ Must NOT call float() — values stay as JAX arrays for JIT compatibility.
 import jax.numpy as jnp
 
 from cilib.core.graph import GraphState
+from cilib.metrics.identity import kind
 
 
+@kind("level")
 def resource_level(state: GraphState):
     """Current resource level."""
     return state.global_attrs["resource_level"]
 
 
+@kind("index")
 def resource_health(state: GraphState):
     """Resource as fraction of initial level (R / R_0)."""
     R = state.global_attrs["resource_level"]
@@ -22,11 +25,13 @@ def resource_health(state: GraphState):
     return R / R0
 
 
+@kind("level")
 def mean_welfare(state: GraphState):
     """Mean reward across all agents."""
     return jnp.mean(state.node_attrs["last_reward"])
 
 
+@kind("level")
 def cooperative_welfare(state: GraphState):
     """Mean reward of cooperative (type-0) agents."""
     rewards = state.node_attrs["last_reward"]
@@ -34,6 +39,7 @@ def cooperative_welfare(state: GraphState):
     return jnp.sum(rewards * is_coop) / (jnp.sum(is_coop) + 1e-8)
 
 
+@kind("level")
 def adversarial_welfare(state: GraphState):
     """Mean reward of adversarial (type-1) agents."""
     rewards = state.node_attrs["last_reward"]
@@ -41,6 +47,7 @@ def adversarial_welfare(state: GraphState):
     return jnp.sum(rewards * is_adv) / (jnp.sum(is_adv) + 1e-8)
 
 
+@kind("concentration")
 def gini_rewards(state: GraphState):
     """Gini coefficient of agent rewards. 0=equal, 1=maximally unequal."""
     rewards = state.node_attrs["last_reward"]

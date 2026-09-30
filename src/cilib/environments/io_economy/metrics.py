@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+from cilib.metrics.identity import kind
 
 
 def attribution_series(trace):
@@ -53,18 +54,22 @@ def _late(series):
 def make_metrics(cfg):
     """Trace -> scalar reductions (harness vmaps these over the seed axis)."""
 
+    @kind("share")
     def human_demand_share(trace):
         return jnp.mean(_late(attribution_series(trace)))
 
+    @kind("level")
     def wage_bill_late(trace):
         return jnp.mean(_late(trace["wage_bill"]))
 
+    @kind("level")
     def unsupervised_ai_spending(trace):
         """Mean late per-tick resources allocated by the AI loop's own rule — demand
         that passes through no human decision (Gradual Disempowerment §6.2.1's 'scale
         of unsupervised AI spending', computable here by construction)."""
         return jnp.mean(_late(jnp.sum(trace["demand_ai"], axis=-1)))
 
+    @kind("index")
     def spectral_margin(trace):
         return 1.0 - spectral_radius(trace["technical"][-1])
 

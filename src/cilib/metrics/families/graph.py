@@ -9,8 +9,10 @@ All functions are pure: GraphState -> JAX scalar.
 import jax.numpy as jnp
 
 from cilib.core.graph import GraphState
+from cilib.metrics.identity import kind
 
 
+@kind("level")
 def spectral_gap(state: GraphState):
     """Algebraic connectivity: 2nd-smallest eigenvalue of the graph Laplacian.
 
@@ -24,6 +26,7 @@ def spectral_gap(state: GraphState):
     return eigenvalues[1]  # 2nd smallest (Fiedler value)
 
 
+@kind("level")
 def mean_degree(state: GraphState):
     """Mean weighted degree from the interaction adjacency matrix."""
     adj = state.adj_matrices["interaction"]

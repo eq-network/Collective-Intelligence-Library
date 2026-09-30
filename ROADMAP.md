@@ -27,12 +27,14 @@ path lands, new environments and register entries stay in Later.
 
 - **Order of Next.** The horizon says run records (O0 + O1) first. The last working
   session (2026-09-10) asked for computation and agent-definition work first, to
-  run larger experiments. 2026-09-30: Jonas again chose core and compute work
-  first (the compile-once move landed). Not formally resolved; the list below
-  keeps the horizon's order.
-- **O1 scope.** Three ad-hoc manifest writers now exist (`experiments/gd_bundles`,
-  `experiments/library_explainer`, `experiments/perf_baseline`). The minimal O1 is
-  one writer that replaces them. Decide the scope before building.
+  run larger experiments. O0 + O1 landed 2026-09-11 on a branch (merged
+  2026-09-30), and 2026-09-30 Jonas again chose core and compute work next. Not
+  formally resolved; the list below keeps the horizon's order.
+- **O1 scope.** Resolved 2026-09-11: one writer, `cilib.runs`, with the two fixture
+  exporters building on its manifest core and `perf_baseline` sharing only the
+  engine block (its output is a timing file, not an address). Still open: what
+  `assumption_audits` should leave behind, since it currently prints and nothing
+  durable exists to route.
 - **AI listening rows.** `ai_insularity` in `ledger_society` is a workaround for
   the frozen AI rows, not a resolution; letting them drift under the attachment
   kernel would make "who the AI attends to" endogenous. Needs its own equivalence
@@ -61,14 +63,6 @@ path lands, new environments and register entries stay in Later.
 
 ## Next
 
-- [ ] **O0 + O1: metric identity and the run store** — a metric gets a stable `id`,
-  a `kind` (share / concentration / rate / level / phase-corner) and a definition
-  hash; a run gets a manifest (env, config, mechanism set and schedules, seeds,
-  steps, git SHA, cilib version) and a timestamped run dir with an index, written by
-  one `RunRecord` writer that the benchmark harness, `assumption_audits`, the three
-  ad-hoc exporters above, and `examples/05` all go through. Manifests and scalar
-  series are small and belong in git; raw trajectories stay ignored. Design:
-  `docs/observability-design.md`. Must precede O2. #observability
 - [ ] **Performance, remaining moves** (`experiments/perf_baseline/README.md`;
   moves 1 and 2 are Done). (a) `run_reduced` / `run_reduced_batch` onto the same
   compile-once path as `run`; they still recompile every call, and the
@@ -239,6 +233,14 @@ not repo split.
   red-teamed. Root `conftest.py` turns on the persistent compile cache: full suite
   557 s to 200 s warm. Detail: `experiments/perf_baseline/README.md`. #performance
   #engine
+- [x] **2026-09-11 O0 + O1: metric identity and the run store** — `@kind`
+  declarations and transitive definition hashes on every catalog and environment
+  metric (`cilib.metrics.identity`); one `cilib.runs` writer with a nested,
+  hash-verified address block, used by the benchmark CLI, `examples/05`, and both
+  fixture exporters; perf_baseline shares the engine block only. Kinds shipped as
+  share / concentration / rate / level / index. Red-team record and limits in
+  `docs/observability-design.md`; contract: `src/cilib/runs/README.md`.
+  `assumption_audits` still writes nothing and stays on the card's list. #observability
 - [x] **2026-09-10 Performance baseline** — `experiments/perf_baseline/`: compile
   costs two orders of magnitude more than running; the eager path recompiles every
   call; seeds are near free; dense ledgers grow at N^1.6 to N^1.8 past about 600

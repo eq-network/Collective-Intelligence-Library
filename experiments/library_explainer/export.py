@@ -20,13 +20,8 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
-import datetime
-import hashlib
-import importlib.metadata
 import json
 import os
-import platform
-import subprocess
 import tempfile
 
 import jax
@@ -47,6 +42,7 @@ from cilib.environments.governed_commons import (
 )
 from cilib.environments.system_graph import system_graph
 from cilib.environments.webexport import trajectory_payload
+from cilib import runs
 from cilib.mechanisms import REGISTRY as MECHANISMS
 from cilib.metrics.families.spectral import fiedler_partition_alignment_of
 
@@ -62,31 +58,6 @@ from .snippets import extract as extract_snippets
 SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "schema",
                            "explainer.schema.json")
 DEFAULT_OUT = os.path.join(os.path.dirname(__file__), "dist-fixtures")
-
-
-def _sha256_file(path: str) -> str:
-    # same manifest grammar as experiments/gd_bundles (kept small over shared)
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 16), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def _engine_info() -> dict:
-    try:
-        rev = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
-                             capture_output=True, text=True,
-                             cwd=os.path.dirname(__file__)).stdout.strip()
-    except OSError:
-        rev = "unknown"
-    return {
-        "package": "collective-intelligence-library",
-        "version": importlib.metadata.version("collective-intelligence-library"),
-        "git_rev": rev or "unknown",
-        "jax_version": jax.__version__,
-        "platform": platform.platform(),
-    }
 
 
 def _validators():
@@ -460,23 +431,31 @@ def export_fixtures(out: str, n_steps: int, validators, smoke: bool = False) -> 
         assert defended_curve[-1] > base_curve[-1], \
             "expectation: late influence survives only defended"
 
+    # the shared record core hosts the explainer schema's fields; the scorecard
+    # and influence-curve designs are part of the address
+    core = runs.manifest(
+        env=ENV, config=make_env(ENV).config, T=n_steps, seed0=SEED0,
+        n_seeds=2 if smoke else SCORECARD_SEEDS, kind="library_explainer",
+        conditions=CONDITIONS, metrics=make_env(ENV).metrics,
+        extra={"scorecard": {"delta": SCORECARD_DELTA},
+               "influence_curve": {"n_seeds": 2 if smoke else CURVE_SEEDS,
+                                   "delta": CURVE_DELTA,
+                                   "t0s": list((0, 1) if smoke else CURVE_T0S),
+                                   "window": 2 if smoke else CURVE_WINDOW,
+                                   "conditions": list(CURVE_CONDITIONS)}})
     manifest = {
+        **core,
         "schema_version": "1",
         "kind": "library_explainer",
         "contract_version": "1.1",
         "env": ENV,
-        "created": datetime.date.today().isoformat(),
-        "engine": _engine_info(),
         "T": n_steps,
         "seed0": SEED0,
         "conditions": sorted(CONDITIONS),
         "run_whitelist": list(RUN_WHITELIST),
-        "checksums": {rel: _sha256_file(os.path.join(out, rel))
-                      for rel in sorted(sizes)},
     }
-    validators["manifest"].validate(manifest)
-    with open(os.path.join(out, "manifest.json"), "w") as f:
-        json.dump(manifest, f, separators=(",", ":"))
+    runs.write(out, manifest, include=sorted(sizes),
+               validate=validators["manifest"].validate, overwrite=True)
 
     total = sum(os.path.getsize(os.path.join(root, name))
                 for root, _, names in os.walk(out) for name in names)

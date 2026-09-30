@@ -18,15 +18,9 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
-import datetime
-import hashlib
-import importlib.metadata
-import inspect
 import itertools
 import json
 import os
-import platform
-import subprocess
 import tempfile
 
 import jax
@@ -39,6 +33,8 @@ from cilib.environments import (
 )
 from cilib.environments.system_graph import system_graph
 from cilib.environments.webexport import trajectory_payload
+from cilib import runs
+from cilib.metrics.identity import metric_id
 
 from .config import (
     BUNDLES, MAX_BUNDLE_BYTES, MAX_RUN_BYTES, ROUND_DECIMALS, SEED0,
@@ -56,38 +52,6 @@ ENV_MODULES = {
 }
 SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "schema", "bundle.schema.json")
 DEFAULT_OUT = os.path.join(os.path.dirname(__file__), "dist-bundles")
-
-
-def _sha256_file(path: str) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 16), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def _sha256_text(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def _canonical(obj) -> str:
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"))
-
-
-def _engine_info() -> dict:
-    try:
-        rev = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
-                             capture_output=True, text=True,
-                             cwd=os.path.dirname(__file__)).stdout.strip()
-    except OSError:
-        rev = "unknown"
-    return {
-        "package": "collective-intelligence-library",
-        "version": importlib.metadata.version("collective-intelligence-library"),
-        "git_rev": rev or "unknown",
-        "jax_version": jax.__version__,
-        "platform": platform.platform(),
-    }
 
 
 def _validators():
@@ -200,20 +164,20 @@ def export_bundle(spec: BundleSpec, lattice: dict, out_root: str,
         for opt in ("unit", "anchor", "paper_ref"):
             if a.get(opt) is None:
                 a.pop(opt, None)
+    # the shared record core (address block, config_hash, engine, created) hosts
+    # the bundle schema's own fields; the sweep axes are part of the address
+    core = runs.manifest(
+        env=spec.env, config=base_env.config, overrides=spec.overrides,
+        T=n_steps, seed0=SEED0, n_seeds=lattice.get("n_seeds", 0), kind="bundle",
+        extra={"axes": [[a["name"], a["values"]] for a in axes]},
+        metrics={m.id: base_env.metrics[m.id] for m in spec.metrics}, notes=spec.notes)
     manifest = {
+        **core,
         "schema_version": "2",
         "contract_version": "1.1",
         "bundle_id": spec.bundle_id,
         "env": spec.env,
         "suite": "gradual_disempowerment",
-        "created": datetime.date.today().isoformat(),
-        "notes": spec.notes,
-        "engine": _engine_info(),
-        "config_hash": _sha256_text(_canonical({
-            "base_config": dataclasses.asdict(base_env.config),
-            "overrides": spec.overrides,
-            "axes": [[a["name"], a["values"]] for a in axes],
-            "T": n_steps, "n_seeds": lattice.get("n_seeds"), "seed0": SEED0})),
         "base_config": dataclasses.asdict(base_env.config),
         "overrides": spec.overrides,
         "mechanisms": [],
@@ -225,9 +189,8 @@ def export_bundle(spec: BundleSpec, lattice: dict, out_root: str,
         "default_cell": default_cell_of(
             spec, dataclasses.asdict(base_env.config), strict),
         "overlays": overlays_for(spec),
-        "metrics": [{"id": m.id, "label": m.label, "direction": m.direction,
-                     "late_window": 0.25,
-                     "definition_hash": _sha256_text(inspect.getsource(base_env.metrics[m.id]))}
+        "metrics": [{"label": m.label, "direction": m.direction, "late_window": 0.25,
+                     **metric_id(m.id, base_env.metrics[m.id]).as_dict()}
                     for m in spec.metrics],
         "trace_fields": {
             "global": sorted(trace_field_kinds["global"] - set(spec.derived)),
@@ -240,13 +203,8 @@ def export_bundle(spec: BundleSpec, lattice: dict, out_root: str,
                      "tick_stride": 1},
         "checksums": {},
     }
-    manifest["checksums"]["scalars.json"] = _sha256_file(os.path.join(out, "scalars.json"))
-    for rel in sorted(sizes):
-        manifest["checksums"][rel.replace(os.sep, "/")] = \
-            _sha256_file(os.path.join(out, rel))
-    validators["manifest"].validate(manifest)
-    with open(os.path.join(out, "manifest.json"), "w") as f:
-        json.dump(manifest, f, separators=(",", ":"))
+    runs.write(out, manifest, include=["scalars.json", *sizes],
+               validate=validators["manifest"].validate, overwrite=True)
 
     total = sum(os.path.getsize(os.path.join(root, name))
                 for root, _, names in os.walk(out) for name in names)
