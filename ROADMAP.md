@@ -10,8 +10,8 @@ the record that carries the detail). Cards carry `#tags` so you can filter by ar
 To pick one up, open an issue naming the card.
 
 Standing constraints, in full in [CLAUDE.md](CLAUDE.md): JAX/JIT compatibility (no
-data-dependent control flow in transforms; static config closed over, never in
-`global_attrs`); the trajectory is the memory ceiling, not the state; deletion over
+data-dependent control flow in transforms; structural config closed over, swept
+dials as 0-d arrays in `global_attrs`, never Python scalars there); the trajectory is the memory ceiling, not the state; deletion over
 abstraction; static-host-friendly artifacts; `python -m pytest -q` stays green.
 
 ## Direction (horizon 2026-Q3)
@@ -49,6 +49,12 @@ path lands, new environments and register entries stay in Later.
 
 ## Now
 
+- [ ] **Traced dial grids: `EnvSpec.run_grid`** (built 2026-10-06, branch
+  `run-grid`). A grid of dial values times a seed batch in one compiled program;
+  cells bit-identical to `run_reduced_batch` at the default `batch=1`. Adds a string
+  `onset` for `scheduled`, the `at_step` reducer, `paired_diff_ci`. Red-teamed
+  2026-10-06, record in the design doc. Owed: Jonas review, merge. Record:
+  `docs/run-grid-design.md`. #performance #engine
 - [ ] **WP4 `delegated_judgment` — read-through and red-team before commit**
   (built 2026-09-15, untracked). Env + `myopic_delegation` policy + 15-rung
   ladder + `experiments/wp4_oversight/` (results.json, figures into the vault

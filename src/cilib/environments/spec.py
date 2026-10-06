@@ -9,7 +9,8 @@ for free, so adding a new one is "implement the five fields, register a name" ra
 bespoke run loop".
 
     EnvSpec ::= {
-      config   : frozen params (closed over by the transforms, never stored in state)
+      config   : frozen params (closed over by the transforms; a dial meant to be swept
+                 is seeded into global_attrs as a 0-d array instead, see run_grid)
       init_fn  : key -> GraphState                  (per-seed initial state; vmap-friendly)
       round_fn : (state, t, key) -> state           (one tick; == core.scan.RoundFn)
       trace_fn : state -> dict                       (per-step readout for trajectories)
@@ -33,6 +34,8 @@ from typing import Any, Callable, Dict, Optional, Tuple
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
+from jax import lax
 
 from cilib.core.graph import GraphState
 from cilib.core.reduce import (Reducer, run_scan_reduce, run_scan_reduce_batch,
@@ -133,7 +136,9 @@ class EnvSpec:
         numpy dial edited in place between calls) keeps the value it saw at the
         first call. Configs are frozen for this reason. Likewise a Python scalar
         in ``global_attrs`` is matched by ``==``, so ``-0.0`` reuses the program
-        traced for ``0.0``; ``global_attrs`` must not vary per call.
+        traced for ``0.0``; Python scalars there must not vary per call. Array
+        entries of ``global_attrs`` are runtime inputs like any other leaf, which
+        is what lets ``run_grid`` vary them without a new program.
         """
         flat, in_tree = jax.tree_util.tree_flatten(args)
         sig = (tag, id(trace_fn), id(self.round_fn), static, in_tree,
@@ -224,6 +229,88 @@ class EnvSpec:
             static=(items, treedef, axes))
         return final_states, traces, jax.vmap(lambda a: _finalize(items, a, n_steps))(final_accs)
 
+    def run_grid(self, key: Any, n_seeds: int, n_steps: int, grid: Dict[str, Any],
+                 reducers: Dict[str, Reducer], trace_fn: Optional[TraceFn] = None,
+                 batch: int = 1) -> Tuple[GraphState, Any, Dict[str, Any]]:
+        """``run_reduced_batch`` over a grid of dial values, compiled once per grid shape.
+
+        ``grid`` maps ``global_attrs`` keys to arrays with a leading cell axis ``G``:
+        cell ``g`` runs every seed with ``global_attrs[k] = grid[k][g]``. The dial
+        values reach the program as runtime arguments, so a new set of values of the
+        same shape reuses the compiled program; looping ``make_env`` over a grid pays
+        one compile per cell. Every cell uses the same ``key``, so seed ``s`` starts
+        from the same state and draws the same randomness in every cell (common random
+        numbers): compare cells as paired differences over seeds.
+
+        A grid key must already be a ``jax.Array`` in the initial ``global_attrs`` (a
+        dial lifted from closed-over config, the ``*_now`` pattern in
+        ``ledger_society/state.py``); grid values are cast to that entry's dtype, and
+        ``step`` and ``rng_key`` are refused. What is overridden is the entry's value
+        in the initial state, nothing more. It acts as a dial only if ``round_fn``
+        reads it and nothing writes it: a global a lever rewrites each tick keeps the
+        grid value for one round, and ``init_fn`` ran with the config value, so a
+        dial that also shapes the initial state cannot be swept this way.
+
+        Cells run inside one program as a ``lax.map``, ``batch`` cells at a time.
+        With ``batch=1`` each cell is the ``run_reduced_batch`` program for its value:
+        the trajectory and every reducer value the scan writes are bit-identical to
+        that call on a spec whose config holds the value. One exception: reducer
+        accumulators are built inside the program, from the state after the
+        override, and an ``init`` value the scan never overwrites (``at_step`` at
+        onset 0 or past the run, ``last`` at T=0) can differ by one float32 ulp,
+        because XLA folds constants the eager reference computes op by op.
+        ``batch > 1`` vectorizes that many cells, which batches whatever the dial
+        touches; XLA may then sum in a different order and the numbers move at
+        float32 rounding, enough to cross a threshold in some models
+        (docs/run-grid-design.md has the measured gap and the speed trade).
+
+        The program is cached on the reducer and ``trace_fn`` objects themselves:
+        build them once and reuse them across calls, or every call recompiles.
+
+        Args:
+            grid: ``{global_attrs key: array (G, *entry_shape)}``, ``G >= 1``.
+            batch: cells vectorized together, ``>= 1``. Part of the program, so a
+                new ``batch`` is a new compile.
+
+        Returns:
+            ``(final_states, traces, reduced)``, each with leading axes ``(G, n_seeds)``.
+        """
+        n_steps = operator.index(n_steps)
+        batch = operator.index(batch)
+        if batch < 1:
+            raise ValueError(f"batch must be >= 1, got {batch}")
+        items = tuple(sorted(reducers.items()))
+        names = tuple(sorted(grid))
+        keys = jr.split(key, n_seeds)
+        cells = _grid_cells(jax.eval_shape(self.init_fn, jr.split(key)[0]), grid, names)
+        init = (_init_batch(self.init_fn, keys)
+                if n_seeds and not _traced((keys, cells)) else None)
+        if init is None:
+            def cell(g):
+                def one(k):
+                    k_init, k_run = jr.split(k)
+                    state = with_globals(self.init_fn(k_init), g)
+                    return run_scan_reduce(self.round_fn, state, n_steps, k_run, reducers,
+                                           trace_fn=trace_fn)
+                return jax.vmap(one)(keys)
+            return _map_cells(cell, cells, batch)
+        leaves, treedef, axes, k_run = init
+
+        def scan(leaves, k_run, cells, ts):
+            def cell(g):
+                def one(ls, k):
+                    state = with_globals(jax.tree_util.tree_unflatten(treedef, ls), g)
+                    accs = tuple(r.init(state, n_steps) for _, r in items)
+                    return run_scan_reduce_over(self.round_fn, state, accs, ts, k, items,
+                                                n_steps, trace_fn)
+                return jax.vmap(one, in_axes=(list(axes), 0))(leaves, k_run)
+            return _map_cells(cell, cells, batch)
+        final_states, final_accs, traces = self._compiled(
+            "grid", scan, (leaves, k_run, cells, jnp.arange(n_steps)), trace_fn,
+            static=(items, treedef, axes, names, batch))
+        finalize = jax.vmap(jax.vmap(lambda a: _finalize(items, a, n_steps)))
+        return final_states, traces, finalize(final_accs)
+
     def evaluate(self, trace: Any) -> Dict[str, Any]:
         """Score a trajectory (or batch of trajectories) with every metric in the suite."""
         return {name: fn(trace) for name, fn in self.metrics.items()}
@@ -231,6 +318,64 @@ class EnvSpec:
 
 def _finalize(items, accs, n_steps):
     return {name: r.finalize(a, n_steps) for a, (name, r) in zip(accs, items)}
+
+
+def _map_cells(f, cells, batch):
+    """``f`` over the leading cell axis, ``batch`` cells vectorized at a time."""
+    return lax.map(f, cells, batch_size=None if batch == 1 else batch)
+
+
+def with_globals(state: GraphState, overrides: Dict[str, Any]) -> GraphState:
+    """``state`` with existing array entries of ``global_attrs`` replaced. Pure.
+
+    Only an entry that is already an array can be replaced: a Python scalar there
+    is static pytree aux, and swapping it would change the program, not its inputs.
+    """
+    for k in overrides:
+        if not isinstance(state.global_attrs.get(k), jax.Array):
+            raise KeyError(f"global_attrs[{k!r}] is not an array entry of this state")
+    return state.replace(global_attrs={**state.global_attrs, **overrides})
+
+
+def _grid_cells(state_shape: GraphState, grid: Dict[str, Any], names) -> Dict[str, Any]:
+    """Check a ``run_grid`` grid against the initial state and cast it to its dtypes.
+
+    ``state_shape`` is ``jax.eval_shape(init_fn, key)``: array entries of
+    ``global_attrs`` come back as ``ShapeDtypeStruct``, static ones as themselves.
+    """
+    if not grid:
+        raise ValueError("run_grid needs at least one grid key")
+    clock = sorted(set(grid) & {"step", "rng_key"})
+    if clock:
+        raise ValueError(f"{clock} cannot be grid keys: the round rewrites rng_key and "
+                         "counts with step, so a grid there is ignored or shifts the clock")
+    cells, sizes = {}, set()
+    for k in names:
+        entry = state_shape.global_attrs.get(k)
+        if not isinstance(entry, jax.ShapeDtypeStruct):
+            raise ValueError(
+                f"grid key {k!r} is not a jax.Array in the initial global_attrs, so its "
+                "value is closed over (or static) and cannot vary at runtime. Lift it: "
+                "seed global_attrs[k] = jnp.array(cfg.x, dtype) in init_fn and read it "
+                "there in round_fn (the *_now pattern, ledger_society/state.py).")
+        if entry.weak_type:
+            raise ValueError(
+                f"global_attrs[{k!r}] is weakly typed; seed it with an explicit dtype "
+                "so a grid value cannot change type promotion")
+        v = jnp.asarray(grid[k], dtype=entry.dtype)
+        if v.ndim < 1 or v.shape[1:] != entry.shape:
+            raise ValueError(f"grid[{k!r}] has shape {v.shape}; expected "
+                             f"(G, *{entry.shape}) for the cell axis G")
+        raw = grid[k]
+        if (jnp.issubdtype(entry.dtype, jnp.integer) and not _traced(raw)
+                and not np.array_equal(np.asarray(raw, dtype=float), np.asarray(v, dtype=float))):
+            raise ValueError(f"grid[{k!r}] has values that are not {entry.dtype} "
+                             "integers; casting would change them")
+        cells[k] = v
+        sizes.add(v.shape[0])
+    if len(sizes) != 1 or 0 in sizes:
+        raise ValueError(f"grid keys need one common, non-zero cell count; got {sorted(sizes)}")
+    return cells
 
 
 def _traced(tree) -> bool:

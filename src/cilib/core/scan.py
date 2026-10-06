@@ -14,11 +14,12 @@ resolution. Those cannot live inside a compiled scan and should not try to.
 
 Conventions for the scan tier (violating these breaks compilation):
 
-- **Time is the scan index**, never stored in ``global_attrs``. ``global_attrs``
-  is *static* pytree aux (see ``GraphState.tree_flatten``): anything placed there
-  is baked in at trace time and cannot change across steps. Per-step-changing
-  data (the tick, swept dials) must be a traced array or threaded through the
-  carry — never a global attr.
+- **Time is the scan index.** ``GraphState.tree_flatten`` splits ``global_attrs``
+  by type: a Python scalar there is *static* pytree aux, baked in at trace time
+  and a recompile when it changes; a ``jax.Array`` there is a traced child like
+  any node attribute. So per-step or swept data (a step counter, a ``*_now``
+  dial that ``EnvSpec.run_grid`` varies) goes in ``global_attrs`` only as an
+  array with an explicit dtype, never as a Python scalar.
 - **Randomness is threaded**: each step splits a fresh key from the carry key
   (the NumPyro pattern). No global RNG.
 - **Fixed structure & shapes**: ``round_fn`` must return a ``GraphState`` with the
@@ -58,7 +59,8 @@ def run_scan(
         round_fn: Pure ``(state, t, key_t) -> state``. Must preserve the pytree
             structure and all array shapes/dtypes of ``state``.
         init_state: Initial ``GraphState``. Only its array children change across
-            steps; ``global_attrs`` stays fixed (it is static aux).
+            steps, including array entries of ``global_attrs``; Python scalars
+            there are static aux and stay fixed.
         n_steps: Number of steps (a static Python int — it is the scan length).
         key: A PRNG key.
         trace_fn: Optional ``state -> pytree`` recorded after every step and

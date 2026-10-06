@@ -33,6 +33,7 @@ per change, the design record for this period lives in `docs/`:
 | Changelog | File Changed | Summary |
 |-----------|-------------|---------|
 | [compile-once](2026-09-30_compile-once.md) | `environments/spec.py` | `run*` compile once per spec, bit-identical to the eager scan; three causes of drift and how each is avoided; the unmerged 2026-09-11 attempt |
+| [run-grid](2026-10-06_run-grid.md) | `environments/spec.py` | `run_grid`: a dial grid as runtime data, one compile per grid shape, cells bit-identical to `run_reduced_batch`; traced onset, `at_step`, `paired_diff_ci` |
 
 ## Visual Reference
 

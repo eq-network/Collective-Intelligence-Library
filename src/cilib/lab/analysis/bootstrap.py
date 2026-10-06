@@ -33,6 +33,37 @@ def bootstrap_ci(values, statistic: Callable = np.mean, n_boot: int = 2000,
     return point, lo, hi
 
 
+def paired_diff_ci(a, b, n_boot: int = 2000, ci: float = 0.95,
+                   seed: int = 0) -> Tuple[float, float, float, float]:
+    """Percentile-bootstrap CI of ``mean(a - b)`` over paired seeds.
+
+    ``a[i]`` and ``b[i]`` must come from the same seed, as cells of one
+    ``EnvSpec.run_grid`` call do, so the seed-to-seed variation both share cancels
+    before resampling. Resampling ``a`` and ``b`` separately would throw that pairing
+    away and widen the interval. The interval covers seed variation only; comparing
+    many cells calls for its own correction.
+
+    Returns ``(point, lo, hi, frac_same_sign)``. The last is the fraction of seeds
+    whose own difference is nonzero and has the sign of ``point``, a check that the
+    mean is not carried by a few seeds; it is NaN when ``point`` is 0.
+
+    Inputs must be 1-D, of equal length and free of NaN: a ``(G, S)`` array would
+    otherwise be pooled into pairs across cells.
+    """
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    if a.ndim != 1 or a.shape != b.shape:
+        raise ValueError(f"paired samples must be 1-D and of equal length, "
+                         f"got shapes {a.shape} and {b.shape}")
+    if np.isnan(a).any() or np.isnan(b).any():
+        raise ValueError("paired samples contain NaN")
+    d = a - b
+    point, lo, hi = bootstrap_ci(d, np.mean, n_boot=n_boot, ci=ci, seed=seed)
+    same = (float("nan") if point == 0 or not d.size
+            else float(np.mean(np.sign(d) == np.sign(point))))
+    return point, lo, hi, same
+
+
 def summarize(per_seed: Dict[str, np.ndarray], **kw) -> Dict[str, Tuple[float, float, float]]:
     """Map ``{metric_name: (S,) per-seed values}`` → ``{metric_name: (point, lo, hi)}``."""
     return {name: bootstrap_ci(np.asarray(vals), **kw) for name, vals in per_seed.items()}

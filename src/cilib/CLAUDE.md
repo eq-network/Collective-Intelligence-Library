@@ -5,9 +5,13 @@ JAX/state specifics that prevent real failures.
 
 - **State lives in `GraphState`, not in objects.** Agents are pure factories; the
   evolving arrays live in `node_attrs` / `adj_matrices`. Don't add stateful classes.
-- **Static config is closed over by transform factories, never stored in
-  `global_attrs`.** `global_attrs` is static pytree aux — swept/per-step data there
-  forces recompiles. `GraphState` carries only *evolving* arrays.
+- **Structural config is closed over; swept dials are 0-d arrays in
+  `global_attrs`.** Config that fixes the program (sizes, horizons, which
+  mechanisms exist) is closed over by transform factories. A dial to be swept is
+  seeded as `jnp.array(cfg.x, dtype)` in `global_attrs` and read there (the `*_now`
+  pattern, `ledger_society/state.py`), so `EnvSpec.run_grid` can vary it without
+  recompiling. Python scalars never go in `global_attrs`: they are static pytree
+  aux and every new value recompiles.
 - **No data-dependent Python control flow inside transforms.** Replace `if traced:`
   with `jnp.where` / `lax.cond` (e.g. `core.category.gated`) so it traces under
   `lax.scan`.
@@ -15,7 +19,9 @@ JAX/state specifics that prevent real failures.
   that `vmap`s over seeds. Use the eager tier (`core.time`) *only* for genuinely
   effectful agents (LLM/HTTP).
 - **`EnvSpec.run` / `run_batch` compile once per spec.** Reuse the spec in a loop;
-  a fresh `make_env` or a fresh `trace_fn` lambda per call is a fresh compile. The
+  a fresh `make_env`, `trace_fn` lambda or reducer dict per call is a fresh compile. For
+  a dial grid, use `run_grid` (one compile per grid shape) instead of a `make_env`
+  loop; compare its cells only with each other, within one call. The
   compiled program keeps whatever Python state `round_fn` read at first call, so
   closed-over config must be immutable. Numbers are bit-identical to the eager
   scan by construction (`EnvSpec._compiled`); keep `tests/test_spec_jit.py` exact.

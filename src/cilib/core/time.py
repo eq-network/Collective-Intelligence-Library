@@ -21,11 +21,12 @@ use the **pure compiled tier** in ``core/scan.py`` (``run_scan`` /
 ``vmap``s over seeds/dials as a single program, which is what makes large
 sweeps cheap.
 
-Important: ``GraphState.global_attrs`` is *static* pytree aux (see
-``GraphState.tree_flatten``). Storing ``tick`` there, as ``tick_world`` does, is
-fine on this eager tier but must NOT be relied upon inside ``jit``/``scan`` —
-on the scan tier, time is the scan index and per-step state lives in the array
-children, never in ``global_attrs``.
+Important: a Python scalar in ``GraphState.global_attrs`` is *static* pytree
+aux (see ``GraphState.tree_flatten``). Storing ``tick`` there as an int, as
+``tick_world`` does, is fine on this eager tier but must NOT be relied upon
+inside ``jit``/``scan`` — on the scan tier, time is the scan index and
+per-step state lives in array children (an array entry of ``global_attrs``
+counts as one).
 """
 
 from dataclasses import dataclass

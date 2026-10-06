@@ -10,7 +10,7 @@ experimentally controllable. The schedule itself is a first-class
 experimental variable.
 """
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Union
 import jax
 import jax.numpy as jnp
 
@@ -80,7 +80,7 @@ def make_scheduled_step(entries: List[ScheduleEntry]) -> Transform:
 
 
 def scheduled(mechanism: Transform, cadence: int = 1, phase_offset: int = 0,
-              onset: int = 0) -> Transform:
+              onset: Union[int, str] = 0) -> Transform:
     """Attach a schedule to ONE mechanism: fires iff ``step >= onset`` AND
     ``(step - phase_offset) % cadence == 0``; identity otherwise (scan-safe lax.cond).
 
@@ -89,6 +89,11 @@ def scheduled(mechanism: Transform, cadence: int = 1, phase_offset: int = 0,
     switching on at t=100" (``onset`` is the regime-shift dial for antifragility
     tests). Defaults are a transparent pass-through, so wrapping is opt-in.
 
+    A string ``onset`` names a ``global_attrs`` entry read each tick instead of a
+    fixed int, so the onset is runtime data and ``EnvSpec.run_grid`` can sweep it
+    without recompiling. The environment must seed that entry (an int32 0-d array)
+    in its initial state.
+
     Built on ``core.category.conditional``, which propagates ``.reads``/``.writes``
     (adding ``step`` to reads) so ``compile_pipeline`` still orders the wrapped
     mechanism correctly. (NOT built on ``gated``, which drops that metadata.)
@@ -96,11 +101,19 @@ def scheduled(mechanism: Transform, cadence: int = 1, phase_offset: int = 0,
     Complement of ``ScheduleEntry``/``make_scheduled_step`` (whole-round composition):
     ``scheduled`` wraps a single transform for use inside a ``compile_pipeline`` list.
     """
-    def fires(state: GraphState):
-        step = state.global_attrs["step"]
-        return (step >= onset) & (((step - phase_offset) % cadence) == 0)
+    if isinstance(onset, str):
+        def fires(state: GraphState):
+            step = state.global_attrs["step"]
+            return ((step >= state.global_attrs[onset])
+                    & (((step - phase_offset) % cadence) == 0))
+        reads = ["step", onset]
+    else:
+        def fires(state: GraphState):
+            step = state.global_attrs["step"]
+            return (step >= onset) & (((step - phase_offset) % cadence) == 0)
+        reads = ["step"]
 
-    wrapped = conditional(fires, mechanism, predicate_reads=["step"])
+    wrapped = conditional(fires, mechanism, predicate_reads=reads)
     wrapped.name = (f"scheduled({getattr(mechanism, 'name', '?')}, "
                     f"cadence={cadence}, phase={phase_offset}, onset={onset})")
     return wrapped
@@ -108,10 +121,11 @@ def scheduled(mechanism: Transform, cadence: int = 1, phase_offset: int = 0,
 
 @dataclass(frozen=True)
 class ScheduleSpec:
-    """Serializable schedule dial for a benchmark condition entry."""
+    """Serializable schedule dial for a benchmark condition entry. ``onset`` is a step
+    or the name of a ``global_attrs`` entry holding one (see ``scheduled``)."""
     cadence: int = 1
     phase_offset: int = 0
-    onset: int = 0
+    onset: Union[int, str] = 0
 
 
 def apply_schedule(transform: Transform, spec: Optional[ScheduleSpec]) -> Transform:

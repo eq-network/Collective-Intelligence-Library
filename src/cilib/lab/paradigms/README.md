@@ -19,9 +19,10 @@ A paradigm `src/cilib/lab/paradigms/<name>/` provides:
 1. **`schema.py`** — the state layout. Which `node_attrs` each agent carries
    (leading axis = N agents), which `adj_matrices` (e.g. `trust`, with a positive
    diagonal = memory/self-loop), and an `*Config` frozen dataclass of the *static*
-   scenario constants. Constants are **closed over by the transforms, never stored
-   in `GraphState.global_attrs`** (which is static pytree aux — putting per-step or
-   swept data there forces recompiles). `GraphState` carries only evolving arrays.
+   scenario constants. Constants are **closed over by the transforms**; a Python
+   scalar in `GraphState.global_attrs` is static pytree aux and forces a recompile
+   per value. A dial meant to be swept goes there only as a 0-d `jax.Array` (see
+   `src/cilib/CLAUDE.md`). `GraphState` carries only evolving arrays and such dials.
 
 2. **`primitives/`** — pure math kernels (pure functions on bare arrays, no
    scenario knowledge). Vendor here anything worth lifting exactly. Batching over

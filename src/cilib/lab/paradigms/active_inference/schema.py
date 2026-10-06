@@ -21,8 +21,8 @@ adj_matrices:
 Scenario constants (the observation operator H, candidate priors, the world
 schedule phi(t), and the hyperparameters) are NOT stored in GraphState — they are
 static config closed over by the transforms (see AIConfig). GraphState carries only
-the evolving arrays, so it stays a clean scan/vmap carry and global_attrs (static
-pytree aux) never holds per-step data.
+the evolving arrays, so it stays a clean scan/vmap carry and global_attrs never
+holds per-step data (a Python scalar there is static pytree aux).
 """
 from __future__ import annotations
 

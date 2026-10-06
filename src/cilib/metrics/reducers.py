@@ -107,6 +107,27 @@ def late_mean(readout: Readout, frac: float = 0.25) -> Reducer:
     return Reducer(init=init, update=update, finalize=finalize)
 
 
+def at_step(readout: Readout, step_key: str) -> Reducer:
+    """The readout just before step ``global_attrs[step_key]`` runs: the state after
+    round ``t_on - 1``, i.e. the last state a mechanism switching on at ``t_on`` has
+    not yet touched (``scheduled(..., onset=step_key)``).
+
+    The step is read from the state, so it can be a ``run_grid`` dial. ``t`` is the
+    scan index, which equals the ``step`` global when the run starts at step 0.
+
+    Exception to the identity-init rule in ``core/reduce.py``: ``init`` is
+    ``readout(initial_state)``, because for ``t_on = 0`` the state before the
+    mechanism first runs IS the initial state, which the scan never visits. A
+    ``t_on`` at or beyond the run length leaves that initial value in place.
+    """
+    return Reducer(
+        init=lambda s, T: readout(s),
+        update=lambda acc, s, t, T: jnp.where(t == s.global_attrs[step_key] - 1,
+                                              readout(s), acc),
+        finalize=lambda acc, T: acc,
+    )
+
+
 def rate(predicate: Readout, frac: float = 1.0) -> Reducer:
     """Fraction of the run (optionally its trailing ``frac``) where a boolean
     readout holds. ``predicate`` may return a per-agent boolean array — it is
@@ -217,6 +238,7 @@ REDUCERS = {
     "total": total,
     "running_mean": running_mean,
     "late_mean": late_mean,
+    "at_step": at_step,
     "rate": rate,
     "running_max": running_max,
     "running_min": running_min,

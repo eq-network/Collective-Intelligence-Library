@@ -111,3 +111,15 @@ def test_validate_hook_runs_on_the_final_manifest(tmp_path):
     runs.write(tmp_path / "r", _manifest(), files={"s.json": {}},
                validate=lambda m: seen.update(m))
     assert "s.json" in seen["checksums"]
+
+
+def test_a_traced_onset_round_trips(tmp_path):
+    """``ScheduleSpec(onset="t_on_now")`` names a global_attrs dial; the record keeps
+    the name, and the name enters the address like an int onset does."""
+    sched = [("quota_vote", QuotaVoteConfig(), ScheduleSpec(onset="t_on_now"))]
+    m = _manifest(conditions={"defended": sched})
+    out = runs.write(tmp_path / "r", m)
+    back = runs.read(out)["address"]["conditions"]["defended"][0]["schedule"]
+    assert back == {"cadence": 1, "phase_offset": 0, "onset": "t_on_now"}
+    other = [("quota_vote", QuotaVoteConfig(), ScheduleSpec(onset=0))]
+    assert m["config_hash"] != _manifest(conditions={"defended": other})["config_hash"]

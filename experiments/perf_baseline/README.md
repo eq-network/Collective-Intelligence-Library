@@ -13,6 +13,7 @@ python -m experiments.perf_baseline.run --envs ledger_society influence_exchange
     --seeds 1 32 --out experiments/perf_baseline/scaling-large.json
 python -m experiments.perf_baseline.cache_probe [cache_dir]   # run three times, see docstring
 python -m experiments.perf_baseline.repeat_calls              # compile-once, after 2026-09-30
+python -m experiments.perf_baseline.grid_calls                # dial grid: make_env loop vs run_grid
 python -m experiments.perf_baseline.table [file.json]         # the tables below
 ```
 
