@@ -90,6 +90,18 @@ spends fastest.
   element-for-element. The modelling consequence is that these five stop being
   run constants once levers land: a claim quoting one of them then owes the
   reader the trajectory it took, not a single number.
+- **The three channel dials can be per-tick globals, behind a flag.** Added
+  2026-10-06 so `EnvSpec.run_grid` can sweep coupling with one compile.
+  `traced_channels=True` seeds `reach_per_spend_now`, `attention_to_ballots_now`
+  and `regime_rate_now`; off, the default, the channels are the closed-over
+  constants as before. Unlike the five above, this lift is not bit-identical on
+  the seed-batched paths: lifting `reach_per_spend` or `regime_rate` changed
+  `run_batch` numbers by about 1e-7 at the defaults and by up to 0.003 in the
+  per-tick human power share at maximum coupling, T = 400. Single rollouts did
+  not change. The flag-off model was checked against the old code at T = 400 on
+  every run path in five configs and is unchanged. A result made with the flag on
+  says so and is compared only with results made with it on. Details in
+  docs/run-grid-design.md, "Lifting can move numbers".
 
 **Classical result reproduced.** Not one theorem — three contract identities on
 every run: per-tick money conservation (Δtotal = mint − sinks), row-stochasticity

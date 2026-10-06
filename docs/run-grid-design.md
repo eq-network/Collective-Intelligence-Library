@@ -45,10 +45,11 @@ about multiple comparisons.
 
 Each one has a test in `src/cilib/environments/tests/test_run_grid.py`.
 
-1. **Lifting a dial changes no number at its default.** A model that reads a dial from
-   `global_attrs` is bit-identical, on `run`, `run_batch` and `run_reduced_batch`, to
-   the same model with the dial closed over, when the global is seeded with the config
-   value. Each dial lifted later gets its own test of this.
+1. **Lifting a dial changes no number at its default, or it is opt-in.** A model that
+   reads a dial from `global_attrs` should be bit-identical, on `run`, `run_batch` and
+   `run_reduced_batch`, to the same model with the dial closed over, when the global
+   is seeded with the config value. This has to be checked per dial; see "Lifting can
+   move numbers" for a case where it failed and what was done.
 2. **One program per grid shape.** New grid values add no program. A new cell count,
    seed count, run length, reducer set or `batch` adds one.
 3. **With `batch=1`, a cell is bit-identical to `run_reduced_batch`** on a spec whose
@@ -97,6 +98,32 @@ no interval. The equality column is exact.
 On this grid the `batch=25` cells that differed did so only at float32 rounding. That
 describes this grid and run length; it is not a bound, and a model with thresholds can
 amplify such a gap. Read `batch > 1` results only against each other.
+
+## Lifting can move numbers
+
+Invariant 1 is a claim to check per dial, not a property of the method. Lifting
+`ledger_society`'s three channel dials on 2026-10-06 was checked against a snapshot
+of the old code: five configs, from the defaults to every channel at its maximum
+with no repair, at T = 400, on `run`, `run_batch` and `run_reduced_batch`, every
+field compared bit for bit.
+
+- `run`, one seed: unchanged in all five configs.
+- The seed-batched paths: `attention_to_ballots` lifted alone changed nothing.
+  `reach_per_spend` or `regime_rate` lifted alone each changed the batched numbers.
+  At the defaults the change was near float32 rounding, about 1e-7. In the
+  maximum-coupling config it grew to 0.003 in the per-tick human power share,
+  because the run carries it through thresholds for 400 steps.
+
+The cause is that XLA compiles a constant and a runtime input differently once
+seeds are under `vmap`; the arithmetic is the same. Changing past batch numbers
+was not acceptable, so the three dials are lifted only under the structural flag
+`traced_channels`. Off, the default, the code is the old expression, and the
+snapshot check found all 798 compared arrays unchanged. On, they are `run_grid`
+dials. A sweep that turns the flag on must say so, and its numbers are not
+bit-comparable with results made with it off.
+
+The lesson for the next dial: lift it, compare a before/after snapshot of the
+batched paths, and put it behind a flag if anything moved.
 
 ## What it does not do
 

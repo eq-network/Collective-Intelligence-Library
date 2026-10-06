@@ -53,7 +53,10 @@ path lands, new environments and register entries stay in Later.
   `run-grid`). A grid of dial values times a seed batch in one compiled program;
   cells bit-identical to `run_reduced_batch` at the default `batch=1`. Adds a string
   `onset` for `scheduled`, the `at_step` reducer, `paired_diff_ci`. Red-teamed
-  2026-10-06, record in the design doc. Owed: Jonas review, merge. Record:
+  2026-10-06, record in the design doc. `ledger_society` is grid-ready: channel
+  dials liftable behind `traced_channels` (lifting moved batched numbers, so it is
+  opt-in), `make_reducers`, `influence.py` (swept defense plan, influence from
+  birth). Owed: Jonas review, merge. Record:
   `docs/run-grid-design.md`. #performance #engine
 - [ ] **WP4 `delegated_judgment` — read-through and red-team before commit**
   (built 2026-09-15, untracked). Env + `myopic_delegation` policy + 15-rung

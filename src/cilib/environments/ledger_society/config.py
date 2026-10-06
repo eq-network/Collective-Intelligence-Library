@@ -35,6 +35,10 @@ from __future__ import annotations
 import dataclasses
 
 
+# the three cross-domain channel dials, liftable with ``traced_channels``
+CHANNELS = ("reach_per_spend", "attention_to_ballots", "regime_rate")
+
+
 @dataclasses.dataclass(frozen=True)
 class LedgerSocietyConfig:
     n_humans: int = 20
@@ -104,6 +108,15 @@ class LedgerSocietyConfig:
     reach_per_spend: float = 4.0     # money→attention (arbitrary-but-swept)
     attention_to_ballots: float = 2.0  # culture→politics port read (arbitrary-but-swept)
     # money→rules is regime_rate above (kept a single dial, not duplicated)
+    # Structural: False closes the three channel dials over as constants, the
+    # model every result before 2026-10-06 ran. True seeds them into
+    # global_attrs as reach_per_spend_now / attention_to_ballots_now /
+    # regime_rate_now, so EnvSpec.run_grid can sweep coupling without a compile
+    # per cell. Same equations, but NOT the same float32 numbers on the batched
+    # paths: XLA compiles a constant differently from a runtime input, and the
+    # gap grows past rounding in thresholded configs (docs/run-grid-design.md,
+    # "Lifting can move numbers"). So it stays off unless a sweep needs it.
+    traced_channels: bool = False
 
     # --- intervention: the influence-cap card (docs/gd-game-design.md, 2026-07-31).
     # A channel property, not a mechanism — a cap written in the mechanism slot

@@ -11,7 +11,10 @@ JAX/state specifics that prevent real failures.
   seeded as `jnp.array(cfg.x, dtype)` in `global_attrs` and read there (the `*_now`
   pattern, `ledger_society/state.py`), so `EnvSpec.run_grid` can vary it without
   recompiling. Python scalars never go in `global_attrs`: they are static pytree
-  aux and every new value recompiles.
+  aux and every new value recompiles. Lifting can move batched numbers at float32
+  rounding (XLA compiles a constant and an input differently): snapshot the batched
+  paths before and after, and put the lift behind a flag if anything moved
+  (`docs/run-grid-design.md`, "Lifting can move numbers").
 - **No data-dependent Python control flow inside transforms.** Replace `if traced:`
   with `jnp.where` / `lax.cond` (e.g. `core.category.gated`) so it traces under
   `lax.scan`.

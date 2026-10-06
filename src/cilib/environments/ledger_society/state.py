@@ -14,7 +14,7 @@ import jax.random as jr
 
 from cilib.core.graph import GraphState
 from ..networks import erdos_renyi
-from .config import LedgerSocietyConfig
+from .config import CHANNELS, LedgerSocietyConfig
 
 
 # --- resources and type contracts (docs/ledger-design.md §2; gd-suite §2) --------
@@ -162,11 +162,18 @@ def make_state(cfg: LedgerSocietyConfig, key) -> GraphState:
         "entrenchment_gain_now": jnp.array(cfg.entrenchment_gain,
                                            dtype=jnp.float32),
     }
+    if cfg.traced_channels:
+        # the three channel dials as run_grid dials (config note on why opt-in)
+        for name in CHANNELS:
+            global_attrs[name + "_now"] = jnp.array(getattr(cfg, name), dtype=jnp.float32)
     if cfg.policy_horizon > 0:
         # the plan is DATA, not config: a dynamic pytree child, so two plans
         # of the same horizon share one compiled program (remote-engine R0)
         global_attrs["policy_plan"] = jnp.zeros((cfg.policy_horizon, 4),
                                                 dtype=jnp.float32)
+        # bookkeeping only, read by no transform: the step a swept plan switches
+        # on, for the at_step reducer (influence.onset_grid writes both together)
+        global_attrs["t_on_now"] = jnp.array(0, dtype=jnp.int32)
     # The three lever families, same contract, one plan each. Widths come from
     # the families' own lever tuples so a family that gains a column cannot
     # drift from the state schema that has to carry it.

@@ -25,6 +25,9 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 from cilib.metrics.identity import kind
+from cilib.metrics.reducers import at_step, late_mean
+
+from .dynamics import _human_shares
 
 
 def _late(series):
@@ -130,3 +133,32 @@ def make_metrics(cfg):
         "journey_composite": journey_composite,
         "journey_enforcement": journey_enforcement,
     }
+
+
+# --- the streaming form, for EnvSpec.run_reduced / run_grid ----------------------
+#
+# The three per-tick human shares already exist as one tick's readout
+# (dynamics._human_shares mirrors the share definitions above), so each late-
+# window metric is a late_mean of that readout. The composite is linear in the
+# three, so its late mean is the mean of their late means.
+
+SHARES = ("human_income_share", "human_attention_share", "human_power_share")
+
+
+def composite_now(state):
+    """The composite human share at one tick: mean of the three ledgers' shares."""
+    s = _human_shares(state)
+    return (s["human_income_share"] + s["human_attention_share"]
+            + s["human_power_share"]) / 3.0
+
+
+def make_reducers(cfg):
+    """``{name: Reducer}`` matching the late-window share metrics and ``composite``
+    to float32 rounding. With ``policy_horizon > 0`` the state carries the
+    ``t_on_now`` bookkeeping dial, and ``composite_at_onset`` reads the composite
+    on the last state before the swept plan switches on (``at_step``)."""
+    reducers = {k: late_mean(lambda s, k=k: _human_shares(s)[k]) for k in SHARES}
+    reducers["composite"] = late_mean(composite_now)
+    if cfg.policy_horizon > 0:
+        reducers["composite_at_onset"] = at_step(composite_now, "t_on_now")
+    return reducers

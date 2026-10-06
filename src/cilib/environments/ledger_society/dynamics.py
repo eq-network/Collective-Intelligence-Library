@@ -26,6 +26,10 @@ Six substrate parameters are read per tick from ``global_attrs`` rather than
 closed over — ``reach_cut_now`` plus ``gamma_w_now``, ``update_rate_w_now``,
 ``churn_now``, ``repair_rate_now``, ``entrenchment_gain_now`` (added
 2026-07-31 for the three-families design, docs/gd-game-three-families.md).
+With ``traced_channels`` the three channel dials join them as
+``reach_per_spend_now``, ``attention_to_ballots_now``, ``regime_rate_now``
+(2026-10-06, for ``EnvSpec.run_grid``); off by default, because unlike the six
+above they move batched numbers at float32 rounding when lifted (config note).
 ``state.py`` seeds each from its config field, so an untouched run is the
 closed-over model bit-for-bit; a live lever can then move them mid-run without
 recompiling. Everything else stays closed over: config that no lever varies is
@@ -49,7 +53,7 @@ from cilib.mechanisms.democracy import PowerWeightedVoteConfig, make_power_weigh
 
 from ..attachment import preferential_reallocation
 from ..ledger import top_target
-from .config import LedgerSocietyConfig
+from .config import CHANNELS, LedgerSocietyConfig
 
 
 def observe_fn(state: GraphState):
@@ -153,8 +157,20 @@ def make_grow(cfg: LedgerSocietyConfig):
 
 # --- money -> attention: reach is bought, by whoever spends ----------------------
 
+def _channel(state: GraphState, cfg: LedgerSocietyConfig, name: str):
+    """A channel dial: the config constant, or with ``cfg.traced_channels`` the
+    ``<name>_now`` global, which ``EnvSpec.run_grid`` can vary. Off, the
+    expression it feeds is the pre-2026-10-06 one exactly (see the config)."""
+    return state.global_attrs[name + "_now"] if cfg.traced_channels else getattr(cfg, name)
+
+
+def _channel_reads(cfg: LedgerSocietyConfig, name: str):
+    return [name + "_now"] if cfg.traced_channels else []
+
+
 def make_broadcast_reach(cfg: LedgerSocietyConfig):
-    @transform(reads=["broadcast_spend", "step", "reach_cut_now"],
+    @transform(reads=["broadcast_spend", "step", "reach_cut_now"]
+               + _channel_reads(cfg, "reach_per_spend"),
                writes=["attract_boost"])
     def broadcast_reach(state: GraphState) -> GraphState:
         # the influence-cap card: from reach_cut_onset, the dial is scaled by
@@ -168,7 +184,8 @@ def make_broadcast_reach(cfg: LedgerSocietyConfig):
                * (1.0 - state.global_attrs["reach_cut_now"]))
         return state.update_node_attrs(
             "attract_boost",
-            1.0 + cfg.reach_per_spend * cut * state.node_attrs["broadcast_spend"])
+            1.0 + _channel(state, cfg, "reach_per_spend") * cut
+            * state.node_attrs["broadcast_spend"])
     return broadcast_reach
 
 
@@ -221,11 +238,12 @@ def make_rewire_delegation(cfg: LedgerSocietyConfig):
     N = cfg.n_humans + cfg.n_ai
 
     @transform(reads=["delegation", "influence", "listen_influence",
-                      "redelegation_friction", "churn_now"],
+                      "redelegation_friction", "churn_now"]
+               + _channel_reads(cfg, "attention_to_ballots"),
                writes=["delegation"])
     def rewire_delegation(state: GraphState) -> GraphState:
         a = ((state.node_attrs["influence"] + cfg.eps_attract) ** cfg.gamma_d
-             * (1.0 + cfg.attention_to_ballots
+             * (1.0 + _channel(state, cfg, "attention_to_ballots")
                 * state.node_attrs["listen_influence"] * N))
         # ballot churn is the politics family's one ballot-shape lever: read
         # per tick from a global seeded with cfg.churn, still scaled by the
@@ -269,7 +287,8 @@ def make_declare_position(cfg: LedgerSocietyConfig):
 
 def make_update_regime(cfg: LedgerSocietyConfig):
     @transform(reads=["lobby_spend", "net_transfer", "influence", "enforcement",
-                      "repair_rate_now", "entrenchment_gain_now"],
+                      "repair_rate_now", "entrenchment_gain_now"]
+               + _channel_reads(cfg, "regime_rate"),
                writes=["enforcement", "redelegation_friction"])
     def update_regime(state: GraphState) -> GraphState:
         lobby = state.node_attrs["lobby_spend"]
@@ -289,7 +308,8 @@ def make_update_regime(cfg: LedgerSocietyConfig):
         # seeded with cfg.repair_rate / cfg.entrenchment_gain rather than
         # closed over (the reach_cut_now idiom).
         regime = jnp.clip(
-            state.global_attrs["enforcement"] + cfg.regime_rate * pressure
+            state.global_attrs["enforcement"]
+            + _channel(state, cfg, "regime_rate") * pressure
             + state.global_attrs["repair_rate_now"]
             * (1.0 - state.global_attrs["enforcement"])
             - state.global_attrs["entrenchment_gain_now"] * over, 0.0, 1.0)
