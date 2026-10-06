@@ -37,6 +37,13 @@ per change, the design record for this period lives in `docs/`:
 
 ## Visual Reference
 
+- **[2026-10-06_suite-and-engine.pdf](2026-10-06_suite-and-engine.pdf)** — the
+  July–October roll-up. Algorithm blocks for every model built in the period
+  (`value_contagion`, `influence_exchange`, `delegative_polity`, `capital_economy`,
+  `ledger_society`) and for the engine (reducers, compile once, `run_grid`). TikZ
+  diagrams: the shared attachment kernel, the five couplings, the economy's money flow,
+  the three ledgers, trace versus carry memory, the run-record layout. Every model
+  result is stated as an ordering with its setup.
 - **[2026-07-24_alpha-benchmark-suite.pdf](2026-07-24_alpha-benchmark-suite.pdf)** — the
   April–July roll-up. TikZ diagrams: three-ring layout, the open-game boundary, schedule
   timeline, the two-counterfactual comparison, the economy register's substitutability
